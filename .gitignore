@@ -1,0 +1,21 @@
+# Ignore local files by default. Only the source distribution is tracked.
+/*
+!/.gitignore
+!/README.md
+!/build_pack.py
+!/deploy.py
+!/launch_background.py
+!/record_run.py
+!/Start-Pilot.ps1
+!/mods-unpacked/
+/mods-unpacked/*
+!/mods-unpacked/Codex-Pilot/
+/mods-unpacked/Codex-Pilot/*
+!/mods-unpacked/Codex-Pilot/*.gd
+!/mods-unpacked/Codex-Pilot/manifest.json
+!/mods-unpacked/Codex-Pilot/extensions/
+/mods-unpacked/Codex-Pilot/extensions/*
+!/mods-unpacked/Codex-Pilot/extensions/*.gd
+!/tools/
+/tools/*
+!/tools/verify_*.gd

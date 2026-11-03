@@ -1,0 +1,21 @@
+{
+  "name": "Pilot",
+  "namespace": "Codex",
+  "version_number": "0.5.0",
+  "description": "Autonomous normal-rules Brotato player with visible decisions and evidence log.",
+  "website_url": "",
+  "dependencies": [],
+  "extra": {
+    "godot": {
+      "authors": [
+        "Codex"
+      ],
+      "compatible_mod_loader_version": [
+        "6.3.0"
+      ],
+      "compatible_game_version": [
+        "1.1.15.4"
+      ]
+    }
+  }
+}
