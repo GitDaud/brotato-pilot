@@ -127,7 +127,7 @@ func _ready():
 	button.text = "Codex Pilot ON / OFF"
 	button.connect("pressed", self, "toggle")
 	box.add_child(button)
-	record("loaded", {"version":"0.6.6-dev","profile":gun_profile,"development_speed":development_speed})
+	record("loaded", {"version":"0.6.7-dev","profile":gun_profile,"development_speed":development_speed})
 	verify_recovery()
 
 func toggle():
@@ -763,7 +763,10 @@ func enemy_priority(enemy):
 	var shooting = enemy._current_attack_behavior is ShootingAttackBehavior
 	return policy.target_priority(enemy is Boss, enemy is Healer or enemy is Buffer, spawning, shooting)
 
-func priority_target(targets, origin, min_range, max_range):
+func is_emergency_target(enemy, player_position, player_velocity):
+	return is_instance_valid(enemy) and enemy is Enemy and not enemy is Boss and not enemy.dead and enemy.get_charmed_by_player_index() < 0 and policy.imminent_contact(enemy.global_position-player_position,enemy._integrate_forces_velocity-player_velocity)
+
+func priority_target(targets, origin, min_range, max_range, player_position = null, player_velocity = Vector2.ZERO):
 	var best = [null,INF]
 	var best_priority = -1
 	var best_cost = INF
@@ -774,6 +777,8 @@ func priority_target(targets, origin, min_range, max_range):
 		var distance = origin.distance_to(enemy.global_position)
 		if distance <= min_range or distance > max_range:
 			continue
+		if player_position != null and is_emergency_target(enemy,player_position,player_velocity):
+			priority = 6 # Only weapon aim: clear imminent body contact, then resume boss.
 		var cost = distance
 		if enemy is Boss:
 			var warning = charge_warning(enemy)
@@ -804,13 +809,13 @@ func charge_warning(enemy):
 		axis = enemy.current_target.global_position-enemy.global_position if enemy.current_target != null else Vector2.ZERO
 	return {"id":enemy.enemy_id,"delay":delay,"direction":axis,"speed":behavior.charge_speed*RunData.current_run_accessibility_settings.speed,"duration":behavior._unlock_move_timer.time_left if charging else behavior.charge_duration,"phase":"charge" if charging else ("windup" if preparing else "cooldown")}
 
-func observe_weapon_target(target, weapon_id):
+func observe_weapon_target(target, weapon_id, emergency = false):
 	if target[0] == null or clock < next_aim_report:
 		return
 	next_aim_report = clock + 1.0
 	var enemy = target[0]
 	var id = enemy.filename if enemy is Neutral else enemy.enemy_id
-	record("weapon_target", {"id":id,"priority":enemy_priority(enemy),"distance":target[1],"weapon":weapon_id})
+	record("weapon_target", {"id":id,"priority":6 if emergency else enemy_priority(enemy),"emergency_contact":emergency,"distance":target[1],"weapon":weapon_id})
 
 func steer(player):
 	if is_instance_valid(player) and not player.is_connected("took_damage",self,"on_native_player_hit"):
@@ -974,7 +979,7 @@ func report(scene):
 			state["hp"] = p.current_stats.health
 			state["max_hp"] = p.max_stats.health
 			state["position"] = [p.global_position.x,p.global_position.y]
-	state["strategy_version"] = "0.6.6-dev"
+	state["strategy_version"] = "0.6.7-dev"
 	state["profile"] = gun_profile
 	state["character"] = selected_character
 	state["run_id"] = recording_id
@@ -1101,7 +1106,7 @@ func _exit_tree():
 
 func analyze_run():
 	var analysis = policy.analyze(recent_combat, RunData.current_wave)
-	analysis["strategy_version"] = "0.6.6-dev"
+	analysis["strategy_version"] = "0.6.7-dev"
 	analysis["run_id"] = recording_id
 	analysis["gun_profile"] = gun_profile
 	analysis["character"] = selected_character
