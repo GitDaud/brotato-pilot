@@ -23,6 +23,10 @@ func weights(stats, wave):
 		"stat_harvesting": (1.1 if stats.get("stat_harvesting", 0) < 25 else 0.35) if wave <= 6 else (0.25 if wave <= 12 else 0.0),
 		"stat_luck": 0.3 if wave < 10 and stats.get("stat_luck", 0) < 15 else 0.05
 	}
+	# Being far below the existing HP target is more urgent than a small deficit.
+	# Especially important for Ranger's native reduced HP gains; also charge HP
+	# drawbacks at the same marginal utility instead of buying away the buffer.
+	result["stat_max_hp"] *= clamp(hp_target / max(1.0,float(stats.get("stat_max_hp",hp_target))),1.0,3.0)
 
 	if brawler:
 		result["stat_ranged_damage"] = 0.0

@@ -127,7 +127,7 @@ func _ready():
 	button.text = "Codex Pilot ON / OFF"
 	button.connect("pressed", self, "toggle")
 	box.add_child(button)
-	record("loaded", {"version":"0.6.4-dev","profile":gun_profile,"development_speed":development_speed})
+	record("loaded", {"version":"0.6.5-dev","profile":gun_profile,"development_speed":development_speed})
 	verify_recovery()
 
 func toggle():
@@ -818,13 +818,15 @@ func steer(player):
 	forecast_player_position = pos
 	for enemy in threat_units(spawner):
 		if is_instance_valid(enemy) and not enemy.dead:
-			if enemy is Boss:
-				var warning = charge_warning(enemy)
-				if not warning.empty():
-					var segment = boss_model.charge_segment(enemy.global_position,warning.direction,warning.speed,warning.delay,warning.duration)
-					if not segment.empty():
-						boss_threats.append(segment)
+			# Ordinary chargers share the native behavior with charging bosses.
+			var warning = charge_warning(enemy)
+			if not warning.empty():
+				var segment = boss_model.charge_segment(enemy.global_position,warning.direction,warning.speed,warning.delay,warning.duration)
+				if not segment.empty():
+					boss_threats.append(segment)
+				if enemy is Boss or pos.distance_squared_to(enemy.global_position) <= 600.0*600.0:
 					boss_warnings.append({"id":warning.id,"phase":warning.phase,"delay":warning.delay,"direction":[warning.direction.x,warning.direction.y]})
+			if enemy is Boss:
 				for attached in enemy._all_additional_projectiles:
 					if not is_instance_valid(attached) or not attached is EnemyProjectileRotating or not attached.is_visible_in_tree() or attached._enable_stop_delay:
 						continue
@@ -929,7 +931,7 @@ func report(scene):
 			state["hp"] = p.current_stats.health
 			state["max_hp"] = p.max_stats.health
 			state["position"] = [p.global_position.x,p.global_position.y]
-	state["strategy_version"] = "0.6.4-dev"
+	state["strategy_version"] = "0.6.5-dev"
 	state["profile"] = gun_profile
 	state["character"] = selected_character
 	state["run_id"] = recording_id
@@ -1056,7 +1058,7 @@ func _exit_tree():
 
 func analyze_run():
 	var analysis = policy.analyze(recent_combat, RunData.current_wave)
-	analysis["strategy_version"] = "0.6.4-dev"
+	analysis["strategy_version"] = "0.6.5-dev"
 	analysis["run_id"] = recording_id
 	analysis["gun_profile"] = gun_profile
 	analysis["character"] = selected_character

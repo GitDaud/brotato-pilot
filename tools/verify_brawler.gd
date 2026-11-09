@@ -68,7 +68,9 @@ func _init():
 	check(boss.focus_cost(200,0.2,false,false) < boss.focus_cost(200,0.9,false,false), "finish wounded boss")
 	check(boss.focus_cost(200,0.2,true,false) > boss.focus_cost(200,0.2,false,false), "avoid charging boss")
 	var hp_effect = {"key":"stat_max_hp","value":4,"custom_key":""}
-	check(abs(policy.score_effects([hp_effect],{"stat_max_hp":10,"stat_gains":{"stat_max_hp":0.75}},3)-9.6) < 0.001, "native ranger HP gain multiplier")
+	var normal_hp_score = policy.score_effects([hp_effect],{"stat_max_hp":10},3)
+	check(abs(policy.score_effects([hp_effect],{"stat_max_hp":10,"stat_gains":{"stat_max_hp":0.75}},3)-normal_hp_score*0.75) < 0.001, "native ranger HP gain multiplier")
+	check(policy.weights({"stat_max_hp":15},9)["stat_max_hp"] > policy.weights({"stat_max_hp":40},9)["stat_max_hp"], "severe HP deficit has greater urgency")
 	policy.character = "character_chunky"
 	check(policy.score_effects([{"key":"stat_speed","value":3,"custom_key":""}],{"stat_speed":0,"stat_gains":{"stat_speed":0}},3) == 0.0, "chunky cannot buy speed gains")
 	check(policy.score_effects([{"key":"stat_lifesteal","value":5,"custom_key":""}],{"stat_lifesteal":-100},3) == 0.0, "chunky unusable lifesteal not valued")
