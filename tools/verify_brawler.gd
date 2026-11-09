@@ -20,6 +20,13 @@ func _init():
 	check(policy.breaks_floor("stat_melee_damage",-6,stats,3), "case 19")
 	check(policy.breaks_floor("stat_range",-1,stats,3), "case 20")
 	check(policy.weights({"stat_dodge":60},20)["stat_dodge"] == 0.0, "case 21")
+	var dodge_gain = {"key":"stat_dodge","value":9,"custom_key":""}
+	check(policy.score_effects([dodge_gain],{"stat_dodge":55},16) == 10.0, "55 to 64 counts only five usable dodge")
+	check(policy.score_effects([dodge_gain],{"stat_dodge":60},16) == 0.0, "capped dodge has no gain")
+	check(policy.score_effects([{"key":"stat_dodge","value":-10,"custom_key":""}],{"stat_dodge":64},16) == -12.0, "dodge loss below cap still costs value")
+	check(policy.movement_target_allowed(true,420.0), "nearby tree pursued")
+	check(not policy.movement_target_allowed(true,421.0), "distant tree does not suppress XP")
+	check(policy.movement_target_allowed(false,2000.0), "distant boss still eligible")
 	var in_range = policy.engagement_score(130,160,1.0)
 	check(in_range > policy.engagement_score(300,160,1.0), "case 23")
 	check(policy.engagement_score(60,160,1.0) == 0.0, "case 24")

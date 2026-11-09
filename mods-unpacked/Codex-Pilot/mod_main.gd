@@ -110,7 +110,7 @@ func _ready():
 	button.text = "Codex Pilot ON / OFF"
 	button.connect("pressed", self, "toggle")
 	box.add_child(button)
-	record("loaded", {"version":"0.6.1-dev","profile":gun_profile,"development_speed":development_speed})
+	record("loaded", {"version":"0.6.2-dev","profile":gun_profile,"development_speed":development_speed})
 	verify_recovery()
 
 func toggle():
@@ -747,7 +747,11 @@ func steer(player):
 	var pos = player.global_position
 	var bounds = ZoneService.get_current_zone_rect().grow(-45)
 	var cells = {}
-	var attack_target = priority_target(threat_units(spawner) + spawner.neutrals,pos,0.0,INF)[0]
+	var movement_targets = threat_units(spawner).duplicate()
+	for neutral in spawner.neutrals:
+		if is_instance_valid(neutral) and policy.movement_target_allowed(true,pos.distance_to(neutral.global_position)):
+			movement_targets.append(neutral)
+	var attack_target = priority_target(movement_targets,pos,0.0,INF)[0]
 	combat_target_id = ""
 	if is_instance_valid(attack_target):
 		combat_target_id = attack_target.filename if attack_target is Neutral else attack_target.enemy_id
@@ -847,7 +851,7 @@ func report(scene):
 			state["hp"] = p.current_stats.health
 			state["max_hp"] = p.max_stats.health
 			state["position"] = [p.global_position.x,p.global_position.y]
-	state["strategy_version"] = "0.6.1-dev" if policy.brawler else "0.5.25"
+	state["strategy_version"] = "0.6.2-dev" if policy.brawler else "0.5.25"
 	state["profile"] = gun_profile
 	state["trees_killed_total"] = ProgressData.data.get("trees_killed",0)
 	state["development_speed"] = development_speed
@@ -953,7 +957,7 @@ func _exit_tree():
 
 func analyze_run():
 	var analysis = policy.analyze(recent_combat, RunData.current_wave)
-	analysis["strategy_version"] = "0.6.1-dev" if policy.brawler else "0.5.25"
+	analysis["strategy_version"] = "0.6.2-dev" if policy.brawler else "0.5.25"
 	analysis["run_id"] = recording_id
 	analysis["gun_profile"] = gun_profile
 	analysis["development_speed"] = development_speed

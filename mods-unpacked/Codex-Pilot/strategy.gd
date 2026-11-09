@@ -34,6 +34,7 @@ func weights(stats, wave):
 func score_effects(effects, stats, wave):
 	var w = weights(stats, wave)
 	var score = 0.0
+	var scored_dodge = float(stats.get("stat_dodge",0))
 	for e in effects:
 		# Pilot continuously moves; a conditional stationary bonus is not active armor.
 		if e.custom_key == "temp_stats_while_not_moving":
@@ -46,8 +47,18 @@ func score_effects(effects, stats, wave):
 		# A capped bonus must not make its corresponding drawback free.
 		if e.value < 0:
 			weight = max(weight, {"stat_max_hp":2.8,"stat_armor":5.0,"stat_ranged_damage":6.0,"stat_melee_damage":4.0,"stat_speed":1.2,"stat_attack_speed":1.0,"stat_lifesteal":2.0}.get(e.key, 0.0))
-		score += float(e.value) * weight
+		var effective_value = float(e.value)
+		if e.key == "stat_dodge":
+			# Count only usable dodge, including losses hidden by existing excess.
+			weight = 2.0 if brawler else 0.9
+			effective_value = clamp(scored_dodge + e.value,0.0,60.0) - clamp(scored_dodge,0.0,60.0)
+			scored_dodge += e.value
+		score += effective_value * weight
 	return score
+
+func movement_target_allowed(is_tree, distance):
+	# Nearby trees remain high priority; distant trees must not suppress XP pickup.
+	return not is_tree or distance <= 420.0
 
 
 func analyze(states, wave):
