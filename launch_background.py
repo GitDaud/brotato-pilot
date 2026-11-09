@@ -1,9 +1,14 @@
 """Launch the actual native game window on the normal desktop, as requested."""
-import ctypes,json,os,subprocess
+import argparse,ctypes,json,os,subprocess
 from pathlib import Path
 ROOT=Path(__file__).resolve().parent
 GAME=Path(r'F:\SteamLibrary\steamapps\common\Brotato')
 def main():
+ parser=argparse.ArgumentParser()
+ parser.add_argument('--profile', choices=['ranged','brawler'], default='ranged')
+ parser.add_argument('--speed', type=int, choices=[1,2,4], default=1)
+ args=parser.parse_args()
+ (ROOT/'run').mkdir(exist_ok=True)
  # Refuse duplicate workers: simultaneous games overwrite the shared evidence files.
  previous=ROOT/'run/background-launch.json'
  if previous.exists():
@@ -23,7 +28,7 @@ def main():
   except (ValueError,KeyError,json.JSONDecodeError):pass
  os.environ.update(SteamAppId='1942280',SteamGameId='1942280')
  with (ROOT/'run/capture-engine.log').open('wb') as log:
-  process=subprocess.Popen([str(GAME/'Brotato.exe'),'--main-pack',str(GAME/'CodexPilot.pck'),'--windowed','--resolution','1920x1080','--audio-driver','Dummy','--log-file',str(ROOT/'run/startup.log')],cwd=GAME,stdout=log,stderr=log)
- result={'pid':process.pid,'desktop':'WinSta0\\Default','display':'native_game_window','capture':'windows_graphics_capture_hwnd','requested_resolution':[1920,1080],'input_isolated':False}
+  process=subprocess.Popen([str(GAME/'Brotato.exe'),'--main-pack',str(GAME/'CodexPilot.pck'),'--windowed','--resolution','1920x1080','--audio-driver','Dummy','--pilot-profile='+args.profile,'--pilot-speed='+str(args.speed),'--log-file',str(ROOT/'run/startup.log')],cwd=GAME,stdout=log,stderr=log)
+ result={'speed':args.speed,'profile':args.profile,'pid':process.pid,'desktop':'WinSta0\\Default','display':'native_game_window','capture':'windows_graphics_capture_hwnd','requested_resolution':[1920,1080],'input_isolated':False}
  (ROOT/'run/background-launch.json').write_text(json.dumps(result,indent=2));print(json.dumps(result))
 if __name__=='__main__':main()

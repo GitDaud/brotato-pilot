@@ -1,7 +1,15 @@
 extends Node
 
 var policy = preload("res://mods-unpacked/Codex-Pilot/strategy.gd").new()
+var boss_model = preload("res://mods-unpacked/Codex-Pilot/boss_model.gd").new()
+var focused_boss_id = 0
+var boss_warnings = []
+var next_boss_report = 0.0
+var orbit_segments_count = 0
+var healing_totals = {}
 var enabled = true
+var development_speed = 1
+var normal_physics_hz = 60
 var finished = false
 var challenge_difficulty = -1
 var gun_profile = "smg_shotgun"
@@ -35,6 +43,8 @@ var steer_peak_us = 0
 var threat_cells = 0
 var slash_zones = 0
 var nearby_bosses = 0
+var combat_target_id = ""
+var next_aim_report = 0.0
 var loot_cells = 0
 var directions = []
 var body_forecasts = {}
@@ -48,11 +58,23 @@ var previous_wave = -1
 var recording_status_at = 0.0
 
 func _init():
+	ModLoaderMod.install_script_extension("res://mods-unpacked/Codex-Pilot/extensions/player.gd")
+	ModLoaderMod.install_script_extension("res://mods-unpacked/Codex-Pilot/extensions/utils.gd")
+	ModLoaderMod.install_script_extension("res://mods-unpacked/Codex-Pilot/extensions/weapon.gd")
 	ModLoaderMod.install_script_extension("res://mods-unpacked/Codex-Pilot/extensions/movement.gd")
 	ModLoaderMod.install_script_extension("res://mods-unpacked/Codex-Pilot/extensions/pause_menu.gd")
 	ModLoaderMod.install_script_extension("res://mods-unpacked/Codex-Pilot/extensions/main.gd")
 
 func _ready():
+	normal_physics_hz = Engine.iterations_per_second
+	for argument in OS.get_cmdline_args():
+		if argument.begins_with("--pilot-speed="):
+			var requested = int(argument.get_slice("=",1))
+			if requested in [1,2,4]:
+				development_speed = requested
+	if "--pilot-profile=brawler" in OS.get_cmdline_args():
+		gun_profile = "brawler_fists"
+		policy.brawler = true
 	get_viewport().hdr = false
 	OS.set_window_size(Vector2(1920,1080))
 	var challenge_file = File.new()
@@ -95,7 +117,7 @@ func _ready():
 	button.text = "Codex Pilot ON / OFF"
 	button.connect("pressed", self, "toggle")
 	box.add_child(button)
-	record("loaded", {"version":"0.5.25"})
+	record("loaded", {"version":"0.6.3-dev","profile":gun_profile,"development_speed":development_speed})
 	verify_recovery()
 
 func toggle():
@@ -119,6 +141,9 @@ func _process(delta):
 	var scene = get_tree().current_scene
 	if scene == null:
 		return
+	var speed = development_speed if enabled and not finished and scene.filename == "res://main.tscn" else 1
+	Engine.iterations_per_second = normal_physics_hz * speed
+	Engine.time_scale = speed
 	update_recording(scene)
 	var path = scene.filename
 	if path != last_scene:
@@ -170,17 +195,17 @@ func _process(delta):
 		analyze_run()
 	elif scene is CharacterSelection:
 		if not scene._has_player_selected[0]:
-			select_element(scene, "character_well_rounded")
+			select_element(scene, "character_brawler" if policy.brawler else "character_well_rounded")
 	elif scene is WeaponSelection:
 		if not scene._has_player_selected[0]:
-			select_element(scene, "weapon_smg")
+			select_element(scene, "weapon_fist" if policy.brawler else "weapon_smg")
 	elif scene is DifficultySelection:
 		if not scene.difficulty_selected:
 			select_element(scene, "difficulty_" + str(challenge_difficulty if challenge_difficulty >= 0 else 0))
-	elif scene is Shop:
+	elif scene.filename.ends_with("/shop.tscn"):
 		shop(scene)
 	elif scene is TitleScreen:
-		if challenge_difficulty < 0 and ProgressData.saved_run_state.has_run_state and ProgressData.check_dlc_valid_for_saved_run_state():
+		if not policy.brawler and challenge_difficulty < 0 and ProgressData.saved_run_state.has_run_state and ProgressData.check_dlc_valid_for_saved_run_state():
 			decision = "Continue saved run"
 			scene._main_menu._on_ContinueButton_pressed()
 		else:
@@ -219,6 +244,12 @@ func select_element(scene, preferred):
 		if e.item.my_id == preferred or e.item.my_id.begins_with(preferred + "_") or (scene is DifficultySelection and e.item.value == (challenge_difficulty if challenge_difficulty >= 0 else 0)):
 			selected = e
 			break
+	if policy.brawler and (scene is CharacterSelection or scene is WeaponSelection or scene is DifficultySelection):
+		if selected == null or not (selected.item.my_id == preferred or selected.item.my_id.begins_with(preferred + "_")):
+			enabled = false
+			decision = "Requested Brawler selection unavailable"
+			record("selection_unavailable", {"id":preferred})
+			return
 	if selected != null:
 		decision = "Select " + selected.item.my_id
 		record("select", {"id":selected.item.my_id})
@@ -226,11 +257,20 @@ func select_element(scene, preferred):
 
 func stat_snapshot():
 	var stats = {}
-	for key in ["stat_max_hp","stat_armor","stat_ranged_damage","stat_percent_damage","stat_attack_speed","stat_lifesteal","stat_hp_regeneration","stat_speed","stat_dodge","stat_crit_chance","stat_range","stat_harvesting","stat_luck"]:
+	for key in ["stat_max_hp","stat_armor","stat_melee_damage","stat_ranged_damage","stat_percent_damage","stat_attack_speed","stat_lifesteal","stat_hp_regeneration","stat_speed","stat_dodge","stat_crit_chance","stat_range","stat_harvesting","stat_luck"]:
 		stats[key] = Utils.get_capped_stat(Keys.generate_hash(key), 0) if key == "stat_max_hp" else Utils.get_stat(Keys.generate_hash(key), 0)
+	stats["trees"] = RunData.get_player_effect(Keys.generate_hash("trees"),0)
+	stats["harvesting_growth"] = RunData.get_player_effect(Keys.generate_hash("harvesting_growth"),0)
 	return stats
 
-func value_item(item):
+func observe_healing(source, requested, actual):
+	if not healing_totals.has(source):
+		healing_totals[source] = {"requested":0,"effective":0,"events":0}
+	healing_totals[source].requested += requested
+	healing_totals[source].effective += actual
+	healing_totals[source].events += 1
+
+func value_item(item, price = 0):
 	if policy.forced_low_health_start(item.effects) or policy.unsupported_extra_spawn(item.effects):
 		return -1000.0
 	var stats = stat_snapshot()
@@ -244,26 +284,30 @@ func value_item(item):
 		if effect.key == "stat_armor" and effect.value < 0 and stats.get("stat_armor",0) < max(2, RunData.current_wave * 0.6):
 			return -1000.0
 	var score = policy.score_effects(item.effects, stats, RunData.current_wave)
+	var damage_key = "stat_melee_damage" if policy.brawler else "stat_ranged_damage"
 	var ranged_delta = 0.0
 	for effect in item.effects:
-		if effect.key == "stat_ranged_damage" and effect.custom_key != "temp_stats_while_not_moving":
+		if effect.key == damage_key and effect.custom_key != "temp_stats_while_not_moving":
 			ranged_delta += effect.value
 	if ranged_delta != 0.0:
-		var old_weight = policy.weights(stats,RunData.current_wave)["stat_ranged_damage"]
+		var old_weight = policy.weights(stats,RunData.current_wave)[damage_key]
 		if ranged_delta < 0.0:
-			old_weight = max(old_weight,6.0)
+			old_weight = max(old_weight,4.0 if policy.brawler else 6.0)
 		score -= ranged_delta * old_weight
 		score += ranged_damage_score(RunData.get_player_weapons(0),stats,ranged_delta)
 	var owned_ids = []
 	for owned in RunData.get_player_items(0):
 		owned_ids.append(owned.my_id)
 	score += synergy_bonus(item.my_id, owned_ids)
+	score += policy.special_item_score(item.my_id,RunData.current_wave,price,owned_ids.count(item.my_id),max(150.0,shop_opening_gold*0.7))
 	# Autonomous survival cannot currently model ongoing self-damage safely.
 	if item.my_id in ["item_blood_donation", "item_bloody_hand"]:
 		score -= 1000.0
 	return score
 
 func synergy_bonus(item_id, owned_ids = []):
+	if policy.brawler:
+		return 0.0
 	# Additional pierces have diminishing benefit; do not pay the same bonus again.
 	if item_id == "item_bandana":
 		if "item_bandana" in owned_ids:
@@ -280,6 +324,8 @@ func synergy_bonus(item_id, owned_ids = []):
 	return 0.0
 
 func weapon_value(item, weapons):
+	if policy.brawler:
+		return 150.0 + item.tier * 35.0 if item.weapon_id == "weapon_fist" else -1.0
 	if gun_profile == "smg_shotgun":
 		var caps = {"weapon_smg":4,"weapon_double_barrel_shotgun":2}
 		if not caps.has(item.weapon_id):
@@ -329,11 +375,13 @@ func weapon_value(item, weapons):
 func base_gun_dps(weapon, ranged_damage):
 	var stats = weapon.stats
 	var hit = float(stats.damage)
+	var damage_key = "stat_melee_damage" if policy.brawler else "stat_ranged_damage"
 	for scaling in stats.scaling_stats:
-		if scaling[0] == "stat_ranged_damage" or scaling[0] == Keys.generate_hash("stat_ranged_damage"):
+		if scaling[0] == damage_key or scaling[0] == Keys.generate_hash(damage_key):
 			hit += ranged_damage * scaling[1]
 	var duration = stats.get_base_cooldown_value(stats,1.0)
-	return max(1.0,hit) * stats.nb_projectiles / max(0.05,duration)
+	var hits = 1 if policy.brawler else stats.nb_projectiles
+	return max(1.0,hit) * hits / max(0.05,duration)
 
 # Normalize direct attack gains to the existing percent-damage utility.
 # This is a shop model, not a survival or hit-rate simulation.
@@ -347,16 +395,16 @@ func direct_gain_score(gain, baseline, stats):
 	return gain / max(0.1,baseline) * max(1.0,100.0+stats.get("stat_percent_damage",0)) * 0.9
 
 func ranged_damage_score(weapons, stats, delta):
-	var ranged = float(stats.get("stat_ranged_damage",0))
+	var ranged = float(stats.get("stat_melee_damage" if policy.brawler else "stat_ranged_damage",0))
 	var baseline = loadout_dps(weapons,ranged)
 	if baseline <= 0.0:
-		return delta * policy.weights(stats,RunData.current_wave)["stat_ranged_damage"]
+		return delta * policy.weights(stats,RunData.current_wave)["stat_melee_damage" if policy.brawler else "stat_ranged_damage"]
 	return direct_gain_score(loadout_dps(weapons,ranged+delta)-baseline,baseline,stats)
 
 func marginal_weapon_score(item, weapons, stats, wave):
 	if weapons.size() < 6:
 		return weapon_value(item,weapons)
-	var ranged = float(stats.get("stat_ranged_damage",0))
+	var ranged = float(stats.get("stat_melee_damage" if policy.brawler else "stat_ranged_damage",0))
 	var gain = -1.0
 	for owned in weapons:
 		if owned.my_id == item.my_id and owned.upgrades_into != null:
@@ -427,7 +475,7 @@ func shop(scene):
 		if n._button.disabled or n.value > gold:
 			record("shop_rejected", {"wave":RunData.current_wave,"id":item.my_id,"cost":n.value,"gold":gold,"reason":"disabled" if n._button.disabled else "unaffordable"})
 			continue
-		var score = value_item(item)
+		var score = value_item(item,n.value)
 		if item is WeaponData:
 			score = weapon_value(item, weapons)
 			if score <= 0:
@@ -464,7 +512,7 @@ func shop(scene):
 			var merge_gain = -INF
 			for owned in weapons:
 				if RunData.can_combine(owned,0):
-					var gain = base_gun_dps(owned.upgrades_into,shop_stats.get("stat_ranged_damage",0))-2*base_gun_dps(owned,shop_stats.get("stat_ranged_damage",0))
+					var gain = base_gun_dps(owned.upgrades_into,shop_stats.get("stat_melee_damage" if policy.brawler else "stat_ranged_damage",0))-2*base_gun_dps(owned,shop_stats.get("stat_melee_damage" if policy.brawler else "stat_ranged_damage",0))
 					if gain > merge_gain:
 						merge_gain = gain
 						merge_weapon = owned
@@ -657,6 +705,68 @@ func threat_units(spawner):
 	# Native enemies excludes the separate bosses list (elites are bosses too).
 	return spawner.get_all_enemies(false)
 
+# Rank only living hostile enemies. The same order drives weapon aim and approach.
+func enemy_priority(enemy):
+	if not is_instance_valid(enemy) or not enemy is Unit or enemy.dead:
+		return -1
+	if enemy is Neutral:
+		var tree = enemy.filename.ends_with("/tree.tscn") or enemy.filename.ends_with("/tree_jungle.tscn")
+		return policy.target_priority(false,false,false,false,true) if tree else -1
+	if not enemy is Enemy or enemy.get_charmed_by_player_index() >= 0:
+		return -1
+	var spawning = enemy._current_attack_behavior is SpawningAttackBehavior
+	var shooting = enemy._current_attack_behavior is ShootingAttackBehavior
+	return policy.target_priority(enemy is Boss, enemy is Healer or enemy is Buffer, spawning, shooting)
+
+func priority_target(targets, origin, min_range, max_range):
+	var best = [null,INF]
+	var best_priority = -1
+	var best_cost = INF
+	for enemy in targets:
+		var priority = enemy_priority(enemy)
+		if priority < 0:
+			continue
+		var distance = origin.distance_to(enemy.global_position)
+		if distance <= min_range or distance > max_range:
+			continue
+		var cost = distance
+		if enemy is Boss:
+			var warning = charge_warning(enemy)
+			cost = boss_model.focus_cost(distance,float(enemy.current_stats.health)/max(1.0,enemy.max_stats.health),not warning.empty(),enemy.get_instance_id()==focused_boss_id)
+		if priority > best_priority or (priority == best_priority and cost < best_cost):
+			best = [enemy,distance]
+			best_priority = priority
+			best_cost = cost
+	return best
+
+func charge_warning(enemy):
+	var behavior = enemy._current_attack_behavior
+	if not behavior is ChargingAttackBehavior:
+		return {}
+	var animation = enemy._animation_player
+	var preparing = animation.is_playing() and animation.current_animation == enemy.shoot_animation_name and not enemy._can_move and not enemy._move_locked
+	var charging = enemy._move_locked
+	var in_range = enemy.current_target != null and Utils.is_between(enemy.global_position.distance_to(enemy.current_target.global_position),behavior.min_range,behavior.max_range)
+	if not preparing and not charging and (behavior._current_cd/60.0 > 0.35 or not in_range):
+		return {}
+	var delay = 0.0
+	if preparing:
+		delay = max(0.0,animation.get_animation(animation.current_animation).length-animation.current_animation_position)/max(0.01,animation.playback_speed)
+	elif not charging:
+		delay = behavior._current_cd/60.0 + animation.get_animation(enemy.shoot_animation_name).length/max(0.01,animation.playback_speed)
+	var axis = behavior._charge_direction
+	if not preparing and not charging or behavior.target_calculation_timing != 0:
+		axis = enemy.current_target.global_position-enemy.global_position if enemy.current_target != null else Vector2.ZERO
+	return {"id":enemy.enemy_id,"delay":delay,"direction":axis,"speed":behavior.charge_speed*RunData.current_run_accessibility_settings.speed,"duration":behavior._unlock_move_timer.time_left if charging else behavior.charge_duration,"phase":"charge" if charging else ("windup" if preparing else "cooldown")}
+
+func observe_weapon_target(target, weapon_id):
+	if target[0] == null or clock < next_aim_report:
+		return
+	next_aim_report = clock + 1.0
+	var enemy = target[0]
+	var id = enemy.filename if enemy is Neutral else enemy.enemy_id
+	record("weapon_target", {"id":id,"priority":enemy_priority(enemy),"distance":target[1],"weapon":weapon_id})
+
 func steer(player):
 	if is_instance_valid(player) and not player.is_connected("took_damage",self,"on_native_player_hit"):
 		player.connect("took_damage",self,"on_native_player_hit")
@@ -680,13 +790,55 @@ func steer(player):
 	var pos = player.global_position
 	var bounds = ZoneService.get_current_zone_rect().grow(-45)
 	var cells = {}
+	var movement_targets = threat_units(spawner).duplicate()
+	for neutral in spawner.neutrals:
+		if is_instance_valid(neutral) and policy.movement_target_allowed(true,pos.distance_to(neutral.global_position)):
+			movement_targets.append(neutral)
+	var attack_target = priority_target(movement_targets,pos,0.0,INF)[0]
+	var new_focus = attack_target.get_instance_id() if attack_target is Boss else 0
+	if new_focus != focused_boss_id:
+		focused_boss_id = new_focus
+		if focused_boss_id != 0:
+			record("boss_focus",{"id":attack_target.enemy_id,"instance_id":focused_boss_id,"health":attack_target.current_stats.health,"reason":"distance_health_charge_with_hysteresis"})
+	combat_target_id = ""
+	if is_instance_valid(attack_target):
+		combat_target_id = attack_target.filename if attack_target is Neutral else attack_target.enemy_id
+	var attack_reach = 0.0
+	for weapon in player.current_weapons:
+		var reach = max(0.0,weapon.get_max_range()-weapon.global_position.distance_to(pos))
+		attack_reach = reach if attack_reach == 0.0 else min(attack_reach,reach)
 	var boss_threats = []
+	boss_warnings = []
+	orbit_segments_count = 0
 	nearby_bosses = 0
 	body_forecasts = {}
 	forecast_msec = OS.get_ticks_msec()
 	forecast_player_position = pos
 	for enemy in threat_units(spawner):
 		if is_instance_valid(enemy) and not enemy.dead:
+			if enemy is Boss:
+				var warning = charge_warning(enemy)
+				if not warning.empty():
+					var segment = boss_model.charge_segment(enemy.global_position,warning.direction,warning.speed,warning.delay,warning.duration)
+					if not segment.empty():
+						boss_threats.append(segment)
+					boss_warnings.append({"id":warning.id,"phase":warning.phase,"delay":warning.delay,"direction":[warning.direction.x,warning.direction.y]})
+				for attached in enemy._all_additional_projectiles:
+					if not is_instance_valid(attached) or not attached is EnemyProjectileRotating or not attached.is_visible_in_tree() or attached._enable_stop_delay:
+						continue
+					var pivot = attached.get_parent()
+					if not pivot is Pivot:
+						continue
+					var center_velocity = enemy._integrate_forces_velocity
+					if not warning.empty() and warning.phase == "charge":
+						center_velocity = warning.direction.normalized()*warning.speed
+					var factor = RunData.current_run_accessibility_settings.speed
+					for arc in boss_model.orbit_segments(pivot.global_position,center_velocity,attached.global_position-pivot.global_position,pivot.direction*pivot.rotation_speed*factor,attached.speed*factor,attached.actual_target_distance):
+						var at_start = arc[0]+arc[3]*arc[4]
+						var at_end = arc[0]+arc[3]*arc[5]
+						if Geometry.get_closest_point_to_segment_2d(pos,at_start,at_end).distance_to(pos) < 600.0:
+							boss_threats.append(arc)
+							orbit_segments_count += 1
 			if pos.distance_squared_to(enemy.global_position) <= 420.0 * 420.0:
 				body_forecasts[enemy.get_instance_id()] = [enemy.global_position,enemy._integrate_forces_velocity]
 			if enemy is Boss and pos.distance_squared_to(enemy.global_position) <= 420.0 * 420.0:
@@ -709,6 +861,9 @@ func steer(player):
 				# Keep ordinary bullets separate from enemy cells.
 				add_threat(cells, p.global_position, pos, 58.0, true, p.velocity)
 	var threats = cells.values() + boss_threats + slash_threats
+	if clock >= next_boss_report and (not boss_warnings.empty() or orbit_segments_count > 0):
+		next_boss_report = clock+1.0
+		record("boss_forecast",{"warnings":boss_warnings,"orbit_segments":orbit_segments_count,"focus":focused_boss_id})
 	threat_cells = threats.size()
 	if clock >= next_loot_scan:
 		next_loot_scan = clock + 0.25
@@ -719,7 +874,7 @@ func steer(player):
 		radial = Vector2.RIGHT
 	var patrol = center + radial.rotated(0.65) * min(bounds.size.x, bounds.size.y) * 0.3
 	var health_ratio = float(player.current_stats.health) / max(1.0,player.max_stats.health)
-	var pursue_loot = has_loot_target and (has_healing_target or health_ratio > 0.45 or threats.size() < 8)
+	var pursue_loot = has_loot_target and not (is_instance_valid(attack_target) and enemy_priority(attack_target) >= 4 and health_ratio > 0.55 and not has_healing_target) and (has_healing_target or health_ratio > 0.45 or threats.size() < 8)
 	var target = loot_target if pursue_loot else patrol
 	var best = -1e20
 	var previous_direction = direction
@@ -735,6 +890,17 @@ func steer(player):
 		var end = pos + v * speed * 0.6
 		score += (initial_distance - end.distance_to(target)) * (1.4 if pursue_loot else 0.25)
 		score -= danger_path(pos, v * speed, threats)
+		if is_instance_valid(attack_target) and not has_healing_target and (not attack_target is Boss or charge_warning(attack_target).empty()):
+			var target_velocity = Vector2.ZERO if attack_target is Neutral else attack_target._integrate_forces_velocity
+			var enemy_future = attack_target.global_position + target_velocity * 0.35
+			var attack_distance = (pos + v * speed * 0.35).distance_to(enemy_future)
+			if policy.brawler:
+				score += policy.engagement_score(attack_distance,attack_reach,health_ratio)
+				score += policy.approach_score(pos.distance_to(enemy_future),attack_distance,attack_reach,health_ratio)
+			elif health_ratio > 0.4 and attack_reach > 180.0:
+				var preferred_range = min(320.0,attack_reach*0.7)
+				score += policy.approach_score(pos.distance_to(enemy_future),attack_distance,preferred_range,health_ratio)
+				score += max(0.0,1.0-abs(attack_distance-preferred_range)/max(100.0,preferred_range)) * 160.0
 		if sampled_damage:
 			candidate_details.append({"v":[v.x,v.y],"score":score})
 		if score > best:
@@ -761,7 +927,19 @@ func report(scene):
 			state["hp"] = p.current_stats.health
 			state["max_hp"] = p.max_stats.health
 			state["position"] = [p.global_position.x,p.global_position.y]
-	state["strategy_version"] = "0.5.25"
+	state["strategy_version"] = "0.6.3-dev" if policy.brawler else "0.5.25"
+	state["profile"] = gun_profile
+	state["trees_killed_total"] = ProgressData.data.get("trees_killed",0)
+	state["development_speed"] = development_speed
+	state["time_scale"] = Engine.time_scale
+	state["physics_hz"] = Engine.iterations_per_second
+	state["physics_delta"] = get_physics_process_delta_time()
+	state["native_tick_delta"] = Utils.physics_one(get_physics_process_delta_time())
+	state["simulation_seconds"] = clock
+	state["combat_target"] = combat_target_id
+	state["boss_warnings"] = boss_warnings
+	state["orbit_segments"] = orbit_segments_count
+	state["healing_totals"] = healing_totals.duplicate(true)
 	state["build_stats"] = stat_snapshot()
 	state["raw_max_hp"] = Utils.get_stat(Keys.stat_max_hp_hash, 0)
 	state["weapons"] = []
@@ -851,14 +1029,18 @@ func update_recording(scene):
 		recording_label.text = "REC starting | " + recording_id
 
 func _exit_tree():
+	Engine.time_scale = 1.0
+	Engine.iterations_per_second = normal_physics_hz
 	end_recording()
 
 
 func analyze_run():
 	var analysis = policy.analyze(recent_combat, RunData.current_wave)
-	analysis["strategy_version"] = "0.5.25"
+	analysis["strategy_version"] = "0.6.3-dev" if policy.brawler else "0.5.25"
 	analysis["run_id"] = recording_id
 	analysis["gun_profile"] = gun_profile
+	analysis["development_speed"] = development_speed
+	analysis["healing_totals"] = healing_totals.duplicate(true)
 	analysis["won"] = RunData.run_won
 	analysis["recording"] = "F:/codex-project/tudou/recordings/" + recording_id + ".mp4"
 	var results_dir = Directory.new()
@@ -873,7 +1055,16 @@ func analyze_run():
 	record("analysis", analysis)
 
 
+func load_base_item(folder, resource_name):
+	var path = "res://items/all/" + folder + "/" + resource_name + ".tres"
+	if not ResourceLoader.exists(path):
+		path = "res://items/all/00_base_game/" + folder + "/" + resource_name + ".tres"
+	return load(path)
+
 func verify_recovery():
+	var selected_brawler = policy.brawler
+	var selected_profile = gun_profile
+	policy.brawler = false
 	var passed = policy.should_restart(false,true,true,8.0) and not policy.should_restart(true,true,true,10.0) and not policy.should_restart(false,true,false,10.0) and not policy.should_restart(false,false,true,10.0) and not policy.should_restart(false,true,true,7.9)
 	var imported = File.new()
 	if imported.open(evidence + "/previous-combat.json", File.READ) == OK:
@@ -945,20 +1136,20 @@ func verify_recovery():
 	passed = passed and boundary_allows(Vector2(24,36),Vector2(200,200),arena)
 	passed = passed and not boundary_allows(Vector2(24,36),Vector2(10,200),arena)
 	passed = passed and boundary_allows(Vector2(24,36),Vector2(35,40),arena)
-	var bait = load("res://items/all/bait/bait_data.tres")
+	var bait = load_base_item("bait","bait_data")
 	var bait_unit = load("res://zones/common/bait/unit_bait.tres")
 	passed = passed and policy.unsupported_extra_spawn(bait.effects)
 	passed = passed and not policy.unsupported_extra_spawn([])
 	passed = passed and bait_unit.min_number == 7 and bait_unit.max_number == 8
-	var ghost = load("res://items/all/weird_ghost/weird_ghost_data.tres")
+	var ghost = load_base_item("weird_ghost","weird_ghost_data")
 	passed = passed and policy.forced_low_health_start(ghost.effects)
 	passed = passed and not policy.forced_low_health_start([])
-	var barricade = load("res://items/all/barricade/barricade_data.tres")
+	var barricade = load_base_item("barricade","barricade_data")
 	var moving_stats = {"stat_armor":5,"stat_speed":20}
 	passed = passed and policy.score_effects(barricade.effects,moving_stats,16) < 0.0
-	var stationary_armor = load("res://items/all/barricade/barricade_effect_1.tres")
+	var stationary_armor = load_base_item("barricade","barricade_effect_1")
 	passed = passed and policy.score_effects([stationary_armor],moving_stats,16) == 0.0
-	var always_speed_loss = load("res://items/all/barricade/barricade_effect_2.tres")
+	var always_speed_loss = load_base_item("barricade","barricade_effect_2")
 	passed = passed and policy.score_effects([always_speed_loss],moving_stats,16) < 0.0
 	passed = passed and weapon_value(actual_smg,[actual_smg,actual_smg,actual_smg,actual_smg,actual_smg]) > 0
 	passed = passed and weapon_value(shotgun,[actual_smg,actual_smg,actual_smg,actual_smg,actual_smg,actual_smg]) > 0
@@ -1014,6 +1205,8 @@ func verify_recovery():
 	checks.open(evidence + "/revision-check.json",File.WRITE)
 	checks.store_string(JSON.print({"version":"0.5.25","passed":passed,"checks":["native early six SMG ranged2 vs HP9 and affordable tier1 upgrade DPS normalization","recovery gates","real defeat evidence","speed/attack/range floors","support upgrade at full slots","no extra support at open slots","incoming projectile collision","real wave16 shop budget regression","reroll purchase reserve / budget / iteration limits","early economy preserved","native shotgun/SMG slot caps and merge","sharp bullet synergy","avoid bounce damage loss for piercing trial","native slash resources","full warning sweep footprint / safe lane","rotated and offset slash transform","real sharp bullet plus triple bandana regression","duplicate synergy diminishing returns","warning escape before native active interval","already active slash stays dangerous","wall infeasible moves rejected","real lethal corner24/36 escape allowed","native barricade stationary armor excluded while moving","unconditional speed penalty retained","real four SMG empty-slot deadlock regression","temporary sixth SMG and later shotgun accepted","native full-loadout marginal upgrade valuation","early slot filling retains priority","real armor offer accepted / weaker marginal weapon rejected","unified item and weapon admission threshold","inside-threat fast escape vs deeper crossing duration","stationary and delayed activation contact fractions","real higher-tier offer admitted after lower-tier merge","shotgun pair-to-higher-tier purchase admitted","native bait extra7-8 enemies risk detected","native weird ghost forced-low-health risk detected","same-cell nearfield normal bodies retained independently","same-cell boss body and velocity retained independently","native separate boss list included","native charmed-enemy exclusion retained"]}))
 	checks.close()
+	policy.brawler = selected_brawler
+	gun_profile = selected_profile
 	record("recovery_selfcheck", {"passed":passed})
 	if not passed:
 		enabled = false

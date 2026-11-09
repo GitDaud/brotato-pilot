@@ -1,12 +1,13 @@
 extends Reference
 
 var armor_bias = 1.0
+var brawler = false
 
 # Thresholds are pilot heuristics, not game rules or guide-prescribed breakpoints.
 func weights(stats, wave):
 	var hp_target = 20.0 + wave * 2.5
 	var armor_target = max(2.0, wave * 0.6)
-	return {
+	var result = {
 		"stat_max_hp": 3.2 if stats.get("stat_max_hp", 0) < hp_target else 0.9,
 		"stat_armor": (9.0 if stats.get("stat_armor", 0) < armor_target else 2.0) * armor_bias,
 		"stat_ranged_damage": 12.0 if stats.get("stat_ranged_damage", 0) < 4 + wave else 4.0,
@@ -22,21 +23,82 @@ func weights(stats, wave):
 		"stat_luck": 0.3 if wave < 10 and stats.get("stat_luck", 0) < 15 else 0.05
 	}
 
+	if brawler:
+		result["stat_ranged_damage"] = 0.0
+		result["stat_melee_damage"] = 6.0 if stats.get("stat_melee_damage",0) < 5 + wave else 2.0
+		result["stat_attack_speed"] = 1.2 if stats.get("stat_attack_speed",0) < 30 else 0.6
+		result["stat_dodge"] = 2.0 if stats.get("stat_dodge",0) < 60 else 0.0
+		result["stat_range"] = 0.35 if stats.get("stat_range",0) < 0 else 0.08
+	# Luck improves native loot and tier rolls; recovering negative luck matters.
+	result["stat_luck"] = (0.7 if wave < 12 else 0.3) * (1.5 if stats.get("stat_luck",0) < 0 else 1.0) * (1.0+min(0.5,stats.get("trees",0)*0.1))
+	return result
+
+func harvesting_return(current, delta, wave, growth = 5.0):
+	var baseline = float(current)
+	var changed = float(current+delta)
+	var gain = 0.0
+	# Final-wave payout cannot fund another shop in this 20-wave objective.
+	for _i in range(max(0,19-wave)):
+		gain += changed-baseline
+		if baseline > 0:
+			baseline += ceil(baseline*growth/100.0)
+		if changed > 0:
+			changed += ceil(changed*growth/100.0)
+	return gain
+
 func score_effects(effects, stats, wave):
 	var w = weights(stats, wave)
 	var score = 0.0
+	var scored_dodge = float(stats.get("stat_dodge",0))
+	var scored_harvesting = float(stats.get("stat_harvesting",0))
 	for e in effects:
 		# Pilot continuously moves; a conditional stationary bonus is not active armor.
 		if e.custom_key == "temp_stats_while_not_moving":
 			continue
+		if brawler and e.key == "stat_ranged_damage":
+			continue
 		if not w.has(e.key):
+			continue
+		if e.key == "stat_harvesting":
+			score += harvesting_return(scored_harvesting,e.value,wave,stats.get("harvesting_growth",5.0))*0.15
+			scored_harvesting += e.value
 			continue
 		var weight = w[e.key]
 		# A capped bonus must not make its corresponding drawback free.
 		if e.value < 0:
-			weight = max(weight, {"stat_max_hp":2.8,"stat_armor":5.0,"stat_ranged_damage":6.0,"stat_speed":1.2,"stat_attack_speed":1.0,"stat_lifesteal":2.0}.get(e.key, 0.0))
-		score += float(e.value) * weight
+			weight = max(weight, {"stat_max_hp":2.8,"stat_armor":5.0,"stat_ranged_damage":6.0,"stat_melee_damage":4.0,"stat_speed":1.2,"stat_attack_speed":1.0,"stat_lifesteal":2.0}.get(e.key, 0.0))
+		var effective_value = float(e.value)
+		if e.key == "stat_dodge":
+			# Count only usable dodge, including losses hidden by existing excess.
+			weight = 2.0 if brawler else 0.9
+			effective_value = clamp(scored_dodge + e.value,0.0,60.0) - clamp(scored_dodge,0.0,60.0)
+			scored_dodge += e.value
+		score += effective_value * weight
 	return score
+
+func movement_target_allowed(is_tree, distance):
+	# Nearby trees remain high priority; distant trees must not suppress XP pickup.
+	return not is_tree or distance <= 420.0
+
+# Conservative pilot estimates, not native guaranteed returns. Price is charged
+# before admitting an investment; late shops therefore lose economic priority.
+func special_item_score(id, wave, price, copies, future_shop_budget = 150.0):
+	var remaining = max(0,20-wave)
+	if id == "item_coupon":
+		return max(0.0,(remaining*future_shop_budget*0.05-price)*0.3)
+	if id == "item_tree":
+		return max(0.0,(remaining*3.0-price)*0.3)
+	if id == "item_recycling_machine":
+		return max(0.0,(remaining*8.0-price)*0.3)
+	if id == "item_bag":
+		return max(0.0,(remaining*0.3*15.0-price)*0.3)
+	if id == "item_cute_monkey":
+		return 18.0/(1.0+copies*0.6)
+	if id == "item_lemonade":
+		return 8.0/(1.0+copies*0.5)
+	if id == "item_lumberjack_shirt":
+		return 6.0 if copies == 0 and wave < 16 else 0.0
+	return 0.0
 
 
 func analyze(states, wave):
@@ -61,13 +123,14 @@ func analyze(states, wave):
 	if last.get("max_hp",0) + 5 < last.get("raw_max_hp", stats.get("stat_max_hp",0)):
 		result.findings.append("Effective max HP below accumulated HP stat; check cap/conditional effects.")
 		result.changes.append("Reject HP-cap items and score HP using capped stat.")
-	for key in ["stat_speed","stat_attack_speed","stat_ranged_damage"]:
-		var target = {"stat_speed":15,"stat_attack_speed":20,"stat_ranged_damage":max(4,wave-3)}[key]
+	var damage_key = "stat_melee_damage" if brawler else "stat_ranged_damage"
+	for key in ["stat_speed","stat_attack_speed",damage_key]:
+		var target = {"stat_speed":15,"stat_attack_speed":20,damage_key:max(4,wave-3)}[key]
 		if stats.get(key,0) < target:
 			result.findings.append(key + " below revision target: " + str(stats.get(key,0)))
 			result.changes.append("Review " + key + " sacrifices and candidate offers before another run.")
 	if stats.get("stat_lifesteal",0) < 8:
-		result.changes.append("Prioritize lifesteal for rapid-fire guns when below 8.")
+		result.changes.append("Review recovery for melee contact." if brawler else "Prioritize lifesteal for rapid-fire guns when below 8.")
 	return result
 
 func should_restart(won, analyzed, recording_ended, elapsed):
@@ -76,6 +139,10 @@ func should_restart(won, analyzed, recording_ended, elapsed):
 
 func breaks_floor(key, delta, stats, wave):
 	var floors = {"stat_speed": min(15.0, wave * 1.5), "stat_ranged_damage": max(0.0, wave - 3.0), "stat_attack_speed": 0.0, "stat_range": -20.0}
+	if brawler:
+		floors.erase("stat_ranged_damage")
+		floors["stat_melee_damage"] = max(0.0,wave-3.0)
+		floors["stat_range"] = -50.0
 	if not floors.has(key):
 		return false
 	return delta < 0 and stats.get(key,0) + delta < floors[key]
@@ -105,3 +172,27 @@ func unsupported_extra_spawn(effects):
 		if effect.key == "extra_enemies_next_wave" and effect.value > 0:
 			return true
 	return false
+
+# Reward a reachable attack band, never body overlap. All candidates still pay
+# the existing full-path collision and projectile penalties.
+func engagement_score(distance, reach, health_ratio):
+	if health_ratio <= 0.55 or reach <= 90.0 or distance < 90.0:
+		return 0.0
+	var preferred = max(90.0,reach * 0.85)
+	return max(0.0,1.0-abs(distance-preferred)/max(40.0,reach*0.5)) * 160.0
+
+func target_priority(boss, support, spawning, shooting, tree = false):
+	if boss:
+		return 5
+	if tree:
+		return 4
+	if support or spawning:
+		return 3
+	if shooting:
+		return 2
+	return 1
+
+func approach_score(before, after, reach, health_ratio):
+	if health_ratio <= 0.55 or reach <= 90.0:
+		return 0.0
+	return clamp(max(0.0,before-reach)-max(0.0,after-reach),-60.0,60.0)
