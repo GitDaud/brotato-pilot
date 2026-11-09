@@ -14,7 +14,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 RUN = ROOT / 'run'
 SAVE = Path.home() / 'AppData/Roaming/Brotato/76561198851811283/save_v3_1.json'
-PLAN = ['mutant', 'old', 'loud', 'lich', 'apprentice', 'chunky', 'explorer', 'ranger']
+PLAN = ['ranger', 'mutant', 'old', 'loud', 'lich', 'apprentice', 'chunky', 'explorer']
 
 
 def read_json(path):
