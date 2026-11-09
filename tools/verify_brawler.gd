@@ -35,6 +35,8 @@ func _init():
 	check(policy.approach_score(900,950,160,1.0) < 0.0, "reject retreat from distant target")
 	check(policy.approach_score(900,850,160,0.4) == 0.0, "low health disables pursuit")
 	check(policy.approach_score(130,110,160,1.0) == 0.0, "no reward for closing inside reach")
+	check(policy.target_priority(true,false,false,false) > policy.target_priority(false,false,false,false,true), "boss above tree")
+	check(policy.target_priority(false,false,false,false,true) > policy.target_priority(false,true,true,true), "tree above other enemies")
 	if failures > 0:
 		quit(1)
 		return

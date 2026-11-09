@@ -130,8 +130,10 @@ func engagement_score(distance, reach, health_ratio):
 	var preferred = max(90.0,reach * 0.85)
 	return max(0.0,1.0-abs(distance-preferred)/max(40.0,reach*0.5)) * 160.0
 
-func target_priority(boss, support, spawning, shooting):
+func target_priority(boss, support, spawning, shooting, tree = false):
 	if boss:
+		return 5
+	if tree:
 		return 4
 	if support or spawning:
 		return 3

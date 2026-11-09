@@ -2,6 +2,8 @@ extends Node
 
 var policy = preload("res://mods-unpacked/Codex-Pilot/strategy.gd").new()
 var enabled = true
+var development_speed = 1
+var normal_physics_hz = 60
 var finished = false
 var challenge_difficulty = -1
 var gun_profile = "smg_shotgun"
@@ -36,6 +38,7 @@ var threat_cells = 0
 var slash_zones = 0
 var nearby_bosses = 0
 var combat_target_id = ""
+var next_aim_report = 0.0
 var loot_cells = 0
 var directions = []
 var body_forecasts = {}
@@ -49,12 +52,19 @@ var previous_wave = -1
 var recording_status_at = 0.0
 
 func _init():
+	ModLoaderMod.install_script_extension("res://mods-unpacked/Codex-Pilot/extensions/utils.gd")
 	ModLoaderMod.install_script_extension("res://mods-unpacked/Codex-Pilot/extensions/weapon.gd")
 	ModLoaderMod.install_script_extension("res://mods-unpacked/Codex-Pilot/extensions/movement.gd")
 	ModLoaderMod.install_script_extension("res://mods-unpacked/Codex-Pilot/extensions/pause_menu.gd")
 	ModLoaderMod.install_script_extension("res://mods-unpacked/Codex-Pilot/extensions/main.gd")
 
 func _ready():
+	normal_physics_hz = Engine.iterations_per_second
+	for argument in OS.get_cmdline_args():
+		if argument.begins_with("--pilot-speed="):
+			var requested = int(argument.get_slice("=",1))
+			if requested in [1,2,4]:
+				development_speed = requested
 	if "--pilot-profile=brawler" in OS.get_cmdline_args():
 		gun_profile = "brawler_fists"
 		policy.brawler = true
@@ -100,7 +110,7 @@ func _ready():
 	button.text = "Codex Pilot ON / OFF"
 	button.connect("pressed", self, "toggle")
 	box.add_child(button)
-	record("loaded", {"version":"0.6.0-dev","profile":gun_profile})
+	record("loaded", {"version":"0.6.1-dev","profile":gun_profile,"development_speed":development_speed})
 	verify_recovery()
 
 func toggle():
@@ -124,6 +134,9 @@ func _process(delta):
 	var scene = get_tree().current_scene
 	if scene == null:
 		return
+	var speed = development_speed if enabled and not finished and scene.filename == "res://main.tscn" else 1
+	Engine.iterations_per_second = normal_physics_hz * speed
+	Engine.time_scale = speed
 	update_recording(scene)
 	var path = scene.filename
 	if path != last_scene:
@@ -182,7 +195,7 @@ func _process(delta):
 	elif scene is DifficultySelection:
 		if not scene.difficulty_selected:
 			select_element(scene, "difficulty_" + str(challenge_difficulty if challenge_difficulty >= 0 else 0))
-	elif scene is Shop:
+	elif scene.filename.ends_with("/shop.tscn"):
 		shop(scene)
 	elif scene is TitleScreen:
 		if not policy.brawler and challenge_difficulty < 0 and ProgressData.saved_run_state.has_run_state and ProgressData.check_dlc_valid_for_saved_run_state():
@@ -224,7 +237,7 @@ func select_element(scene, preferred):
 		if e.item.my_id == preferred or e.item.my_id.begins_with(preferred + "_") or (scene is DifficultySelection and e.item.value == (challenge_difficulty if challenge_difficulty >= 0 else 0)):
 			selected = e
 			break
-	if policy.brawler and (scene is CharacterSelection or scene is WeaponSelection):
+	if policy.brawler and (scene is CharacterSelection or scene is WeaponSelection or scene is DifficultySelection):
 		if selected == null or not (selected.item.my_id == preferred or selected.item.my_id.begins_with(preferred + "_")):
 			enabled = false
 			decision = "Requested Brawler selection unavailable"
@@ -677,7 +690,12 @@ func threat_units(spawner):
 
 # Rank only living hostile enemies. The same order drives weapon aim and approach.
 func enemy_priority(enemy):
-	if not is_instance_valid(enemy) or not enemy is Enemy or enemy.dead or enemy.get_charmed_by_player_index() >= 0:
+	if not is_instance_valid(enemy) or not enemy is Unit or enemy.dead:
+		return -1
+	if enemy is Neutral:
+		var tree = enemy.filename.ends_with("/tree.tscn") or enemy.filename.ends_with("/tree_jungle.tscn")
+		return policy.target_priority(false,false,false,false,true) if tree else -1
+	if not enemy is Enemy or enemy.get_charmed_by_player_index() >= 0:
 		return -1
 	var spawning = enemy._current_attack_behavior is SpawningAttackBehavior
 	var shooting = enemy._current_attack_behavior is ShootingAttackBehavior
@@ -697,6 +715,14 @@ func priority_target(targets, origin, min_range, max_range):
 			best = [enemy,distance]
 			best_priority = priority
 	return best
+
+func observe_weapon_target(target, weapon_id):
+	if target[0] == null or clock < next_aim_report:
+		return
+	next_aim_report = clock + 1.0
+	var enemy = target[0]
+	var id = enemy.filename if enemy is Neutral else enemy.enemy_id
+	record("weapon_target", {"id":id,"priority":enemy_priority(enemy),"distance":target[1],"weapon":weapon_id})
 
 func steer(player):
 	if is_instance_valid(player) and not player.is_connected("took_damage",self,"on_native_player_hit"):
@@ -721,8 +747,10 @@ func steer(player):
 	var pos = player.global_position
 	var bounds = ZoneService.get_current_zone_rect().grow(-45)
 	var cells = {}
-	var attack_target = priority_target(threat_units(spawner),pos,0.0,INF)[0]
-	combat_target_id = attack_target.enemy_id if is_instance_valid(attack_target) else ""
+	var attack_target = priority_target(threat_units(spawner) + spawner.neutrals,pos,0.0,INF)[0]
+	combat_target_id = ""
+	if is_instance_valid(attack_target):
+		combat_target_id = attack_target.filename if attack_target is Neutral else attack_target.enemy_id
 	var attack_reach = 0.0
 	for weapon in player.current_weapons:
 		var reach = max(0.0,weapon.get_max_range()-weapon.global_position.distance_to(pos))
@@ -766,7 +794,7 @@ func steer(player):
 		radial = Vector2.RIGHT
 	var patrol = center + radial.rotated(0.65) * min(bounds.size.x, bounds.size.y) * 0.3
 	var health_ratio = float(player.current_stats.health) / max(1.0,player.max_stats.health)
-	var pursue_loot = has_loot_target and not (is_instance_valid(attack_target) and attack_target is Boss and health_ratio > 0.55 and not has_healing_target) and (has_healing_target or health_ratio > 0.45 or threats.size() < 8)
+	var pursue_loot = has_loot_target and not (is_instance_valid(attack_target) and enemy_priority(attack_target) >= 4 and health_ratio > 0.55 and not has_healing_target) and (has_healing_target or health_ratio > 0.45 or threats.size() < 8)
 	var target = loot_target if pursue_loot else patrol
 	var best = -1e20
 	var previous_direction = direction
@@ -783,7 +811,8 @@ func steer(player):
 		score += (initial_distance - end.distance_to(target)) * (1.4 if pursue_loot else 0.25)
 		score -= danger_path(pos, v * speed, threats)
 		if is_instance_valid(attack_target) and not has_healing_target:
-			var enemy_future = attack_target.global_position + attack_target._integrate_forces_velocity * 0.35
+			var target_velocity = Vector2.ZERO if attack_target is Neutral else attack_target._integrate_forces_velocity
+			var enemy_future = attack_target.global_position + target_velocity * 0.35
 			var attack_distance = (pos + v * speed * 0.35).distance_to(enemy_future)
 			if policy.brawler:
 				score += policy.engagement_score(attack_distance,attack_reach,health_ratio)
@@ -818,8 +847,15 @@ func report(scene):
 			state["hp"] = p.current_stats.health
 			state["max_hp"] = p.max_stats.health
 			state["position"] = [p.global_position.x,p.global_position.y]
-	state["strategy_version"] = "0.6.0-dev" if policy.brawler else "0.5.25"
+	state["strategy_version"] = "0.6.1-dev" if policy.brawler else "0.5.25"
 	state["profile"] = gun_profile
+	state["trees_killed_total"] = ProgressData.data.get("trees_killed",0)
+	state["development_speed"] = development_speed
+	state["time_scale"] = Engine.time_scale
+	state["physics_hz"] = Engine.iterations_per_second
+	state["physics_delta"] = get_physics_process_delta_time()
+	state["native_tick_delta"] = Utils.physics_one(get_physics_process_delta_time())
+	state["simulation_seconds"] = clock
 	state["combat_target"] = combat_target_id
 	state["build_stats"] = stat_snapshot()
 	state["raw_max_hp"] = Utils.get_stat(Keys.stat_max_hp_hash, 0)
@@ -910,14 +946,17 @@ func update_recording(scene):
 		recording_label.text = "REC starting | " + recording_id
 
 func _exit_tree():
+	Engine.time_scale = 1.0
+	Engine.iterations_per_second = normal_physics_hz
 	end_recording()
 
 
 func analyze_run():
 	var analysis = policy.analyze(recent_combat, RunData.current_wave)
-	analysis["strategy_version"] = "0.6.0-dev" if policy.brawler else "0.5.25"
+	analysis["strategy_version"] = "0.6.1-dev" if policy.brawler else "0.5.25"
 	analysis["run_id"] = recording_id
 	analysis["gun_profile"] = gun_profile
+	analysis["development_speed"] = development_speed
 	analysis["won"] = RunData.run_won
 	analysis["recording"] = "F:/codex-project/tudou/recordings/" + recording_id + ".mp4"
 	var results_dir = Directory.new()
@@ -931,6 +970,12 @@ func analyze_run():
 	results_dir.copy(evidence + "/settlement.png", evidence + "/results/" + recording_id + ".png")
 	record("analysis", analysis)
 
+
+func load_base_item(folder, resource_name):
+	var path = "res://items/all/" + folder + "/" + resource_name + ".tres"
+	if not ResourceLoader.exists(path):
+		path = "res://items/all/00_base_game/" + folder + "/" + resource_name + ".tres"
+	return load(path)
 
 func verify_recovery():
 	var selected_brawler = policy.brawler
@@ -1007,20 +1052,20 @@ func verify_recovery():
 	passed = passed and boundary_allows(Vector2(24,36),Vector2(200,200),arena)
 	passed = passed and not boundary_allows(Vector2(24,36),Vector2(10,200),arena)
 	passed = passed and boundary_allows(Vector2(24,36),Vector2(35,40),arena)
-	var bait = load("res://items/all/bait/bait_data.tres")
+	var bait = load_base_item("bait","bait_data")
 	var bait_unit = load("res://zones/common/bait/unit_bait.tres")
 	passed = passed and policy.unsupported_extra_spawn(bait.effects)
 	passed = passed and not policy.unsupported_extra_spawn([])
 	passed = passed and bait_unit.min_number == 7 and bait_unit.max_number == 8
-	var ghost = load("res://items/all/weird_ghost/weird_ghost_data.tres")
+	var ghost = load_base_item("weird_ghost","weird_ghost_data")
 	passed = passed and policy.forced_low_health_start(ghost.effects)
 	passed = passed and not policy.forced_low_health_start([])
-	var barricade = load("res://items/all/barricade/barricade_data.tres")
+	var barricade = load_base_item("barricade","barricade_data")
 	var moving_stats = {"stat_armor":5,"stat_speed":20}
 	passed = passed and policy.score_effects(barricade.effects,moving_stats,16) < 0.0
-	var stationary_armor = load("res://items/all/barricade/barricade_effect_1.tres")
+	var stationary_armor = load_base_item("barricade","barricade_effect_1")
 	passed = passed and policy.score_effects([stationary_armor],moving_stats,16) == 0.0
-	var always_speed_loss = load("res://items/all/barricade/barricade_effect_2.tres")
+	var always_speed_loss = load_base_item("barricade","barricade_effect_2")
 	passed = passed and policy.score_effects([always_speed_loss],moving_stats,16) < 0.0
 	passed = passed and weapon_value(actual_smg,[actual_smg,actual_smg,actual_smg,actual_smg,actual_smg]) > 0
 	passed = passed and weapon_value(shotgun,[actual_smg,actual_smg,actual_smg,actual_smg,actual_smg,actual_smg]) > 0
