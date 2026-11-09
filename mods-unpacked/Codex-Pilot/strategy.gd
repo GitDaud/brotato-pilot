@@ -29,12 +29,28 @@ func weights(stats, wave):
 		result["stat_attack_speed"] = 1.2 if stats.get("stat_attack_speed",0) < 30 else 0.6
 		result["stat_dodge"] = 2.0 if stats.get("stat_dodge",0) < 60 else 0.0
 		result["stat_range"] = 0.35 if stats.get("stat_range",0) < 0 else 0.08
+	# Luck improves native loot and tier rolls; recovering negative luck matters.
+	result["stat_luck"] = (0.7 if wave < 12 else 0.3) * (1.5 if stats.get("stat_luck",0) < 0 else 1.0) * (1.0+min(0.5,stats.get("trees",0)*0.1))
 	return result
+
+func harvesting_return(current, delta, wave, growth = 5.0):
+	var baseline = float(current)
+	var changed = float(current+delta)
+	var gain = 0.0
+	# Final-wave payout cannot fund another shop in this 20-wave objective.
+	for _i in range(max(0,19-wave)):
+		gain += changed-baseline
+		if baseline > 0:
+			baseline += ceil(baseline*growth/100.0)
+		if changed > 0:
+			changed += ceil(changed*growth/100.0)
+	return gain
 
 func score_effects(effects, stats, wave):
 	var w = weights(stats, wave)
 	var score = 0.0
 	var scored_dodge = float(stats.get("stat_dodge",0))
+	var scored_harvesting = float(stats.get("stat_harvesting",0))
 	for e in effects:
 		# Pilot continuously moves; a conditional stationary bonus is not active armor.
 		if e.custom_key == "temp_stats_while_not_moving":
@@ -42,6 +58,10 @@ func score_effects(effects, stats, wave):
 		if brawler and e.key == "stat_ranged_damage":
 			continue
 		if not w.has(e.key):
+			continue
+		if e.key == "stat_harvesting":
+			score += harvesting_return(scored_harvesting,e.value,wave,stats.get("harvesting_growth",5.0))*0.15
+			scored_harvesting += e.value
 			continue
 		var weight = w[e.key]
 		# A capped bonus must not make its corresponding drawback free.
@@ -59,6 +79,26 @@ func score_effects(effects, stats, wave):
 func movement_target_allowed(is_tree, distance):
 	# Nearby trees remain high priority; distant trees must not suppress XP pickup.
 	return not is_tree or distance <= 420.0
+
+# Conservative pilot estimates, not native guaranteed returns. Price is charged
+# before admitting an investment; late shops therefore lose economic priority.
+func special_item_score(id, wave, price, copies, future_shop_budget = 150.0):
+	var remaining = max(0,20-wave)
+	if id == "item_coupon":
+		return max(0.0,(remaining*future_shop_budget*0.05-price)*0.3)
+	if id == "item_tree":
+		return max(0.0,(remaining*3.0-price)*0.3)
+	if id == "item_recycling_machine":
+		return max(0.0,(remaining*8.0-price)*0.3)
+	if id == "item_bag":
+		return max(0.0,(remaining*0.3*15.0-price)*0.3)
+	if id == "item_cute_monkey":
+		return 18.0/(1.0+copies*0.6)
+	if id == "item_lemonade":
+		return 8.0/(1.0+copies*0.5)
+	if id == "item_lumberjack_shirt":
+		return 6.0 if copies == 0 and wave < 16 else 0.0
+	return 0.0
 
 
 func analyze(states, wave):

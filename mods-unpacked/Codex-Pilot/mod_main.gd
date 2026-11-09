@@ -1,6 +1,12 @@
 extends Node
 
 var policy = preload("res://mods-unpacked/Codex-Pilot/strategy.gd").new()
+var boss_model = preload("res://mods-unpacked/Codex-Pilot/boss_model.gd").new()
+var focused_boss_id = 0
+var boss_warnings = []
+var next_boss_report = 0.0
+var orbit_segments_count = 0
+var healing_totals = {}
 var enabled = true
 var development_speed = 1
 var normal_physics_hz = 60
@@ -52,6 +58,7 @@ var previous_wave = -1
 var recording_status_at = 0.0
 
 func _init():
+	ModLoaderMod.install_script_extension("res://mods-unpacked/Codex-Pilot/extensions/player.gd")
 	ModLoaderMod.install_script_extension("res://mods-unpacked/Codex-Pilot/extensions/utils.gd")
 	ModLoaderMod.install_script_extension("res://mods-unpacked/Codex-Pilot/extensions/weapon.gd")
 	ModLoaderMod.install_script_extension("res://mods-unpacked/Codex-Pilot/extensions/movement.gd")
@@ -110,7 +117,7 @@ func _ready():
 	button.text = "Codex Pilot ON / OFF"
 	button.connect("pressed", self, "toggle")
 	box.add_child(button)
-	record("loaded", {"version":"0.6.2-dev","profile":gun_profile,"development_speed":development_speed})
+	record("loaded", {"version":"0.6.3-dev","profile":gun_profile,"development_speed":development_speed})
 	verify_recovery()
 
 func toggle():
@@ -252,9 +259,18 @@ func stat_snapshot():
 	var stats = {}
 	for key in ["stat_max_hp","stat_armor","stat_melee_damage","stat_ranged_damage","stat_percent_damage","stat_attack_speed","stat_lifesteal","stat_hp_regeneration","stat_speed","stat_dodge","stat_crit_chance","stat_range","stat_harvesting","stat_luck"]:
 		stats[key] = Utils.get_capped_stat(Keys.generate_hash(key), 0) if key == "stat_max_hp" else Utils.get_stat(Keys.generate_hash(key), 0)
+	stats["trees"] = RunData.get_player_effect(Keys.generate_hash("trees"),0)
+	stats["harvesting_growth"] = RunData.get_player_effect(Keys.generate_hash("harvesting_growth"),0)
 	return stats
 
-func value_item(item):
+func observe_healing(source, requested, actual):
+	if not healing_totals.has(source):
+		healing_totals[source] = {"requested":0,"effective":0,"events":0}
+	healing_totals[source].requested += requested
+	healing_totals[source].effective += actual
+	healing_totals[source].events += 1
+
+func value_item(item, price = 0):
 	if policy.forced_low_health_start(item.effects) or policy.unsupported_extra_spawn(item.effects):
 		return -1000.0
 	var stats = stat_snapshot()
@@ -283,6 +299,7 @@ func value_item(item):
 	for owned in RunData.get_player_items(0):
 		owned_ids.append(owned.my_id)
 	score += synergy_bonus(item.my_id, owned_ids)
+	score += policy.special_item_score(item.my_id,RunData.current_wave,price,owned_ids.count(item.my_id),max(150.0,shop_opening_gold*0.7))
 	# Autonomous survival cannot currently model ongoing self-damage safely.
 	if item.my_id in ["item_blood_donation", "item_bloody_hand"]:
 		score -= 1000.0
@@ -458,7 +475,7 @@ func shop(scene):
 		if n._button.disabled or n.value > gold:
 			record("shop_rejected", {"wave":RunData.current_wave,"id":item.my_id,"cost":n.value,"gold":gold,"reason":"disabled" if n._button.disabled else "unaffordable"})
 			continue
-		var score = value_item(item)
+		var score = value_item(item,n.value)
 		if item is WeaponData:
 			score = weapon_value(item, weapons)
 			if score <= 0:
@@ -704,6 +721,7 @@ func enemy_priority(enemy):
 func priority_target(targets, origin, min_range, max_range):
 	var best = [null,INF]
 	var best_priority = -1
+	var best_cost = INF
 	for enemy in targets:
 		var priority = enemy_priority(enemy)
 		if priority < 0:
@@ -711,10 +729,35 @@ func priority_target(targets, origin, min_range, max_range):
 		var distance = origin.distance_to(enemy.global_position)
 		if distance <= min_range or distance > max_range:
 			continue
-		if priority > best_priority or (priority == best_priority and distance < best[1]):
+		var cost = distance
+		if enemy is Boss:
+			var warning = charge_warning(enemy)
+			cost = boss_model.focus_cost(distance,float(enemy.current_stats.health)/max(1.0,enemy.max_stats.health),not warning.empty(),enemy.get_instance_id()==focused_boss_id)
+		if priority > best_priority or (priority == best_priority and cost < best_cost):
 			best = [enemy,distance]
 			best_priority = priority
+			best_cost = cost
 	return best
+
+func charge_warning(enemy):
+	var behavior = enemy._current_attack_behavior
+	if not behavior is ChargingAttackBehavior:
+		return {}
+	var animation = enemy._animation_player
+	var preparing = animation.is_playing() and animation.current_animation == enemy.shoot_animation_name and not enemy._can_move and not enemy._move_locked
+	var charging = enemy._move_locked
+	var in_range = enemy.current_target != null and Utils.is_between(enemy.global_position.distance_to(enemy.current_target.global_position),behavior.min_range,behavior.max_range)
+	if not preparing and not charging and (behavior._current_cd/60.0 > 0.35 or not in_range):
+		return {}
+	var delay = 0.0
+	if preparing:
+		delay = max(0.0,animation.get_animation(animation.current_animation).length-animation.current_animation_position)/max(0.01,animation.playback_speed)
+	elif not charging:
+		delay = behavior._current_cd/60.0 + animation.get_animation(enemy.shoot_animation_name).length/max(0.01,animation.playback_speed)
+	var axis = behavior._charge_direction
+	if not preparing and not charging or behavior.target_calculation_timing != 0:
+		axis = enemy.current_target.global_position-enemy.global_position if enemy.current_target != null else Vector2.ZERO
+	return {"id":enemy.enemy_id,"delay":delay,"direction":axis,"speed":behavior.charge_speed*RunData.current_run_accessibility_settings.speed,"duration":behavior._unlock_move_timer.time_left if charging else behavior.charge_duration,"phase":"charge" if charging else ("windup" if preparing else "cooldown")}
 
 func observe_weapon_target(target, weapon_id):
 	if target[0] == null or clock < next_aim_report:
@@ -752,6 +795,11 @@ func steer(player):
 		if is_instance_valid(neutral) and policy.movement_target_allowed(true,pos.distance_to(neutral.global_position)):
 			movement_targets.append(neutral)
 	var attack_target = priority_target(movement_targets,pos,0.0,INF)[0]
+	var new_focus = attack_target.get_instance_id() if attack_target is Boss else 0
+	if new_focus != focused_boss_id:
+		focused_boss_id = new_focus
+		if focused_boss_id != 0:
+			record("boss_focus",{"id":attack_target.enemy_id,"instance_id":focused_boss_id,"health":attack_target.current_stats.health,"reason":"distance_health_charge_with_hysteresis"})
 	combat_target_id = ""
 	if is_instance_valid(attack_target):
 		combat_target_id = attack_target.filename if attack_target is Neutral else attack_target.enemy_id
@@ -760,12 +808,37 @@ func steer(player):
 		var reach = max(0.0,weapon.get_max_range()-weapon.global_position.distance_to(pos))
 		attack_reach = reach if attack_reach == 0.0 else min(attack_reach,reach)
 	var boss_threats = []
+	boss_warnings = []
+	orbit_segments_count = 0
 	nearby_bosses = 0
 	body_forecasts = {}
 	forecast_msec = OS.get_ticks_msec()
 	forecast_player_position = pos
 	for enemy in threat_units(spawner):
 		if is_instance_valid(enemy) and not enemy.dead:
+			if enemy is Boss:
+				var warning = charge_warning(enemy)
+				if not warning.empty():
+					var segment = boss_model.charge_segment(enemy.global_position,warning.direction,warning.speed,warning.delay,warning.duration)
+					if not segment.empty():
+						boss_threats.append(segment)
+					boss_warnings.append({"id":warning.id,"phase":warning.phase,"delay":warning.delay,"direction":[warning.direction.x,warning.direction.y]})
+				for attached in enemy._all_additional_projectiles:
+					if not is_instance_valid(attached) or not attached is EnemyProjectileRotating or not attached.is_visible_in_tree() or attached._enable_stop_delay:
+						continue
+					var pivot = attached.get_parent()
+					if not pivot is Pivot:
+						continue
+					var center_velocity = enemy._integrate_forces_velocity
+					if not warning.empty() and warning.phase == "charge":
+						center_velocity = warning.direction.normalized()*warning.speed
+					var factor = RunData.current_run_accessibility_settings.speed
+					for arc in boss_model.orbit_segments(pivot.global_position,center_velocity,attached.global_position-pivot.global_position,pivot.direction*pivot.rotation_speed*factor,attached.speed*factor,attached.actual_target_distance):
+						var at_start = arc[0]+arc[3]*arc[4]
+						var at_end = arc[0]+arc[3]*arc[5]
+						if Geometry.get_closest_point_to_segment_2d(pos,at_start,at_end).distance_to(pos) < 600.0:
+							boss_threats.append(arc)
+							orbit_segments_count += 1
 			if pos.distance_squared_to(enemy.global_position) <= 420.0 * 420.0:
 				body_forecasts[enemy.get_instance_id()] = [enemy.global_position,enemy._integrate_forces_velocity]
 			if enemy is Boss and pos.distance_squared_to(enemy.global_position) <= 420.0 * 420.0:
@@ -788,6 +861,9 @@ func steer(player):
 				# Keep ordinary bullets separate from enemy cells.
 				add_threat(cells, p.global_position, pos, 58.0, true, p.velocity)
 	var threats = cells.values() + boss_threats + slash_threats
+	if clock >= next_boss_report and (not boss_warnings.empty() or orbit_segments_count > 0):
+		next_boss_report = clock+1.0
+		record("boss_forecast",{"warnings":boss_warnings,"orbit_segments":orbit_segments_count,"focus":focused_boss_id})
 	threat_cells = threats.size()
 	if clock >= next_loot_scan:
 		next_loot_scan = clock + 0.25
@@ -814,7 +890,7 @@ func steer(player):
 		var end = pos + v * speed * 0.6
 		score += (initial_distance - end.distance_to(target)) * (1.4 if pursue_loot else 0.25)
 		score -= danger_path(pos, v * speed, threats)
-		if is_instance_valid(attack_target) and not has_healing_target:
+		if is_instance_valid(attack_target) and not has_healing_target and (not attack_target is Boss or charge_warning(attack_target).empty()):
 			var target_velocity = Vector2.ZERO if attack_target is Neutral else attack_target._integrate_forces_velocity
 			var enemy_future = attack_target.global_position + target_velocity * 0.35
 			var attack_distance = (pos + v * speed * 0.35).distance_to(enemy_future)
@@ -851,7 +927,7 @@ func report(scene):
 			state["hp"] = p.current_stats.health
 			state["max_hp"] = p.max_stats.health
 			state["position"] = [p.global_position.x,p.global_position.y]
-	state["strategy_version"] = "0.6.2-dev" if policy.brawler else "0.5.25"
+	state["strategy_version"] = "0.6.3-dev" if policy.brawler else "0.5.25"
 	state["profile"] = gun_profile
 	state["trees_killed_total"] = ProgressData.data.get("trees_killed",0)
 	state["development_speed"] = development_speed
@@ -861,6 +937,9 @@ func report(scene):
 	state["native_tick_delta"] = Utils.physics_one(get_physics_process_delta_time())
 	state["simulation_seconds"] = clock
 	state["combat_target"] = combat_target_id
+	state["boss_warnings"] = boss_warnings
+	state["orbit_segments"] = orbit_segments_count
+	state["healing_totals"] = healing_totals.duplicate(true)
 	state["build_stats"] = stat_snapshot()
 	state["raw_max_hp"] = Utils.get_stat(Keys.stat_max_hp_hash, 0)
 	state["weapons"] = []
@@ -957,10 +1036,11 @@ func _exit_tree():
 
 func analyze_run():
 	var analysis = policy.analyze(recent_combat, RunData.current_wave)
-	analysis["strategy_version"] = "0.6.2-dev" if policy.brawler else "0.5.25"
+	analysis["strategy_version"] = "0.6.3-dev" if policy.brawler else "0.5.25"
 	analysis["run_id"] = recording_id
 	analysis["gun_profile"] = gun_profile
 	analysis["development_speed"] = development_speed
+	analysis["healing_totals"] = healing_totals.duplicate(true)
 	analysis["won"] = RunData.run_won
 	analysis["recording"] = "F:/codex-project/tudou/recordings/" + recording_id + ".mp4"
 	var results_dir = Directory.new()

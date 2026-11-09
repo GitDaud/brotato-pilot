@@ -44,6 +44,27 @@ func _init():
 	check(policy.approach_score(130,110,160,1.0) == 0.0, "no reward for closing inside reach")
 	check(policy.target_priority(true,false,false,false) > policy.target_priority(false,false,false,false,true), "boss above tree")
 	check(policy.target_priority(false,false,false,false,true) > policy.target_priority(false,true,true,true), "tree above other enemies")
+	check(policy.special_item_score("item_coupon",2,20,0) > 4.0, "early coupon pays back")
+	check(policy.special_item_score("item_coupon",19,60,0) == 0.0, "late coupon rejected")
+	check(policy.special_item_score("item_tree",2,20,0) > 4.0, "early tree investment")
+	check(policy.special_item_score("item_tree",19,62,0) == 0.0, "late tree rejected")
+	check(policy.special_item_score("item_cute_monkey",5,42,0) > 4.0, "monkey recovery no longer zero")
+	check(policy.harvesting_return(0,8,2) > policy.harvesting_return(0,8,15), "harvesting remaining horizon")
+	check(policy.harvesting_return(0,8,19) == 0.0, "no spending after final payout")
+	check(policy.harvesting_return(8,-10,5) < 0.0, "harvesting loss charged")
+	check(policy.weights({"stat_luck":-28},10)["stat_luck"] > policy.weights({"stat_luck":20},10)["stat_luck"], "repair negative luck")
+	var boss = load("res://mods-unpacked/Codex-Pilot/boss_model.gd").new()
+	var arc = boss.orbit_segments(Vector2.ZERO,Vector2(10,0),Vector2(250,0),1.2,0,250)
+	for i in range(arc.size()):
+		var segment = arc[i]
+		var t = segment[5]
+		var expected = Vector2(10,0)*t+Vector2(250,0).rotated(1.2*t)
+		check((segment[0]+segment[3]*t).distance_to(expected) < 0.01, "orbit endpoint and moving parent")
+	check(boss.charge_segment(Vector2.ZERO,Vector2.RIGHT,750,0.8,0.5).empty(), "charge outside horizon")
+	var charge = boss.charge_segment(Vector2(10,0),Vector2.RIGHT,750,0.2,0.5)
+	check((charge[0]+charge[3]*0.2).distance_to(Vector2(10,0)) < 0.01, "delayed charge origin")
+	check(boss.focus_cost(200,0.2,false,false) < boss.focus_cost(200,0.9,false,false), "finish wounded boss")
+	check(boss.focus_cost(200,0.2,true,false) > boss.focus_cost(200,0.2,false,false), "avoid charging boss")
 	if failures > 0:
 		quit(1)
 		return
