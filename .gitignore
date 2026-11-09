@@ -6,6 +6,7 @@
 !/deploy.py
 !/launch_background.py
 !/record_run.py
+!/campaign.py
 !/Start-Pilot.ps1
 !/mods-unpacked/
 /mods-unpacked/*

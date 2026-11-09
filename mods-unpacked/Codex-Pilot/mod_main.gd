@@ -51,6 +51,9 @@ var body_forecasts = {}
 var forecast_msec = 0
 var forecast_player_position = Vector2.ZERO
 var recording_id = ""
+var recording_enabled = false
+var selected_character = "character_well_rounded"
+var selected_weapon = "weapon_smg"
 var recording_ended = false
 var recording_end_at = -1.0
 var recording_label
@@ -72,9 +75,13 @@ func _ready():
 			var requested = int(argument.get_slice("=",1))
 			if requested in [1,2,4]:
 				development_speed = requested
+		if argument == "--pilot-record=1":
+			recording_enabled = true
 	if "--pilot-profile=brawler" in OS.get_cmdline_args():
 		gun_profile = "brawler_fists"
 		policy.brawler = true
+		selected_character = "character_brawler"
+		selected_weapon = "weapon_fist"
 	get_viewport().hdr = false
 	OS.set_window_size(Vector2(1920,1080))
 	var challenge_file = File.new()
@@ -83,6 +90,9 @@ func _ready():
 		challenge_file.close()
 		if challenge is Dictionary and challenge.get("enabled", false):
 			challenge_difficulty = int(clamp(challenge.get("difficulty", 1), 0, 5))
+			selected_character = str(challenge.get("character",selected_character))
+			selected_weapon = str(challenge.get("weapon",selected_weapon))
+	policy.character = selected_character
 	var settings_file = File.new()
 	if settings_file.open(evidence + "/adaptation.json", File.READ) == OK:
 		var saved = parse_json(settings_file.get_as_text())
@@ -117,7 +127,7 @@ func _ready():
 	button.text = "Codex Pilot ON / OFF"
 	button.connect("pressed", self, "toggle")
 	box.add_child(button)
-	record("loaded", {"version":"0.6.3-dev","profile":gun_profile,"development_speed":development_speed})
+	record("loaded", {"version":"0.6.4-dev","profile":gun_profile,"development_speed":development_speed})
 	verify_recovery()
 
 func toggle():
@@ -162,26 +172,7 @@ func _process(delta):
 		next_report = clock + 1.0
 		report(scene)
 	if finished:
-		if challenge_difficulty >= 0 and scene is BaseEndRun:
-			if RunData.run_won and RunData.current_difficulty < 5 and recording_ended and clock - settlement_at >= 8.0:
-				challenge_difficulty = RunData.current_difficulty + 1
-				var challenge_file = File.new()
-				if challenge_file.open(evidence + "/challenge.json", File.WRITE) == OK:
-					challenge_file.store_string(JSON.print({"enabled":true,"difficulty":challenge_difficulty}))
-					challenge_file.close()
-				record("challenge_advance", {"difficulty":challenge_difficulty})
-				scene._on_NewRunButton_pressed()
-			else:
-				decision = "Challenge complete" if RunData.run_won else "Challenge defeat - review required"
-			return
-		var review_gate = File.new()
-		if review_gate.file_exists(evidence + "/optimization-hold"):
-			decision = "Review required - next run held"
-			return
-		if enabled and scene is BaseEndRun and policy.should_restart(RunData.run_won, settlement_at >= 0, recording_ended, clock - settlement_at):
-			decision = "Analysis saved - starting next run"
-			record("auto_restart", {"previous_run":recording_id})
-			scene._on_NewRunButton_pressed()
+		decision = "Run complete - controller authorization required"
 		return
 	if not enabled or scene_age < 1.5 or clock < next_action:
 		return
@@ -195,10 +186,10 @@ func _process(delta):
 		analyze_run()
 	elif scene is CharacterSelection:
 		if not scene._has_player_selected[0]:
-			select_element(scene, "character_brawler" if policy.brawler else "character_well_rounded")
+			select_element(scene, selected_character)
 	elif scene is WeaponSelection:
 		if not scene._has_player_selected[0]:
-			select_element(scene, "weapon_fist" if policy.brawler else "weapon_smg")
+			select_element(scene, selected_weapon)
 	elif scene is DifficultySelection:
 		if not scene.difficulty_selected:
 			select_element(scene, "difficulty_" + str(challenge_difficulty if challenge_difficulty >= 0 else 0))
@@ -244,10 +235,10 @@ func select_element(scene, preferred):
 		if e.item.my_id == preferred or e.item.my_id.begins_with(preferred + "_") or (scene is DifficultySelection and e.item.value == (challenge_difficulty if challenge_difficulty >= 0 else 0)):
 			selected = e
 			break
-	if policy.brawler and (scene is CharacterSelection or scene is WeaponSelection or scene is DifficultySelection):
+	if scene is CharacterSelection or scene is WeaponSelection or scene is DifficultySelection:
 		if selected == null or not (selected.item.my_id == preferred or selected.item.my_id.begins_with(preferred + "_")):
 			enabled = false
-			decision = "Requested Brawler selection unavailable"
+			decision = "Requested character/weapon/difficulty unavailable"
 			record("selection_unavailable", {"id":preferred})
 			return
 	if selected != null:
@@ -261,6 +252,10 @@ func stat_snapshot():
 		stats[key] = Utils.get_capped_stat(Keys.generate_hash(key), 0) if key == "stat_max_hp" else Utils.get_stat(Keys.generate_hash(key), 0)
 	stats["trees"] = RunData.get_player_effect(Keys.generate_hash("trees"),0)
 	stats["harvesting_growth"] = RunData.get_player_effect(Keys.generate_hash("harvesting_growth"),0)
+	stats["stat_gains"] = {}
+	for key in stats.keys():
+		if str(key).begins_with("stat_") and key != "stat_gains":
+			stats.stat_gains[key] = RunData.get_stat_gain(Keys.generate_hash(key),0)
 	return stats
 
 func observe_healing(source, requested, actual):
@@ -279,7 +274,7 @@ func value_item(item, price = 0):
 	for effect in item.effects:
 		if effect.key == "hp_cap":
 			return -1000.0
-		if effect.value < 0 and policy.breaks_floor(effect.key, effect.value, stats, RunData.current_wave):
+		if effect.value < 0 and policy.breaks_floor(effect.key, effect.value*stats.stat_gains.get(effect.key,1.0), stats, RunData.current_wave):
 			return -1000.0
 		if effect.key == "stat_armor" and effect.value < 0 and stats.get("stat_armor",0) < max(2, RunData.current_wave * 0.6):
 			return -1000.0
@@ -288,7 +283,7 @@ func value_item(item, price = 0):
 	var ranged_delta = 0.0
 	for effect in item.effects:
 		if effect.key == damage_key and effect.custom_key != "temp_stats_while_not_moving":
-			ranged_delta += effect.value
+			ranged_delta += effect.value*stats.stat_gains.get(damage_key,1.0)
 	if ranged_delta != 0.0:
 		var old_weight = policy.weights(stats,RunData.current_wave)[damage_key]
 		if ranged_delta < 0.0:
@@ -927,8 +922,11 @@ func report(scene):
 			state["hp"] = p.current_stats.health
 			state["max_hp"] = p.max_stats.health
 			state["position"] = [p.global_position.x,p.global_position.y]
-	state["strategy_version"] = "0.6.3-dev" if policy.brawler else "0.5.25"
+	state["strategy_version"] = "0.6.4-dev"
 	state["profile"] = gun_profile
+	state["character"] = selected_character
+	state["run_id"] = recording_id
+	state["recording_enabled"] = recording_enabled
 	state["trees_killed_total"] = ProgressData.data.get("trees_killed",0)
 	state["development_speed"] = development_speed
 	state["time_scale"] = Engine.time_scale
@@ -982,6 +980,13 @@ func begin_recording():
 	recording_id = "run-%04d%02d%02d-%02d%02d%02d-%s" % [dt.year,dt.month,dt.day,dt.hour,dt.minute,dt.second,OS.get_ticks_msec()]
 	recording_ended = false
 	recording_end_at = -1.0
+	healing_totals = {}
+	focused_boss_id = 0
+	boss_warnings = []
+	if not recording_enabled:
+		recording_ended = true
+		record("run_start",{"run_id":recording_id,"character":selected_character,"recording":false})
+		return
 	var pid = OS.execute("C:/Users/75315/miniconda3/python.exe", PoolStringArray(["F:/codex-project/tudou/record_run.py",recording_id,str(OS.get_process_id())]), false)
 	record("recording_start", {"run_id":recording_id,"worker_pid":pid})
 
@@ -996,9 +1001,14 @@ func end_recording():
 	record("recording_stop", {"run_id":recording_id})
 
 func update_recording(scene):
+	# A finished run must never be rearmed just by visiting character selection.
+	if finished:
+		if recording_end_at >= 0 and clock >= recording_end_at:
+			end_recording()
+		return
 	var changed = scene.filename != last_scene
 	var new_selection = changed and scene is CharacterSelection
-	var new_game = scene.filename == "res://main.tscn" and (recording_id == "" or (changed and recording_ended))
+	var new_game = scene.filename == "res://main.tscn" and recording_id == ""
 	if new_selection or new_game:
 		finished = false
 		settlement_at = -1.0
@@ -1006,6 +1016,9 @@ func update_recording(scene):
 		recent_combat = []
 		begin_recording()
 	previous_wave = RunData.current_wave
+	if not recording_enabled:
+		recording_label.text = "REC OFF"
+		return
 	if recording_id == "":
 		recording_label.text = "REC waiting for next run"
 		return
@@ -1036,13 +1049,14 @@ func _exit_tree():
 
 func analyze_run():
 	var analysis = policy.analyze(recent_combat, RunData.current_wave)
-	analysis["strategy_version"] = "0.6.3-dev" if policy.brawler else "0.5.25"
+	analysis["strategy_version"] = "0.6.4-dev"
 	analysis["run_id"] = recording_id
 	analysis["gun_profile"] = gun_profile
+	analysis["character"] = selected_character
 	analysis["development_speed"] = development_speed
 	analysis["healing_totals"] = healing_totals.duplicate(true)
 	analysis["won"] = RunData.run_won
-	analysis["recording"] = "F:/codex-project/tudou/recordings/" + recording_id + ".mp4"
+	analysis["recording"] = "F:/codex-project/tudou/recordings/" + recording_id + ".mp4" if recording_enabled else ""
 	var results_dir = Directory.new()
 	results_dir.make_dir_recursive(evidence + "/results")
 	var result_file = File.new()
@@ -1063,6 +1077,8 @@ func load_base_item(folder, resource_name):
 
 func verify_recovery():
 	var selected_brawler = policy.brawler
+	var saved_character_policy = policy.character
+	policy.character = "character_well_rounded"
 	var selected_profile = gun_profile
 	policy.brawler = false
 	var passed = policy.should_restart(false,true,true,8.0) and not policy.should_restart(true,true,true,10.0) and not policy.should_restart(false,true,false,10.0) and not policy.should_restart(false,false,true,10.0) and not policy.should_restart(false,true,true,7.9)
@@ -1206,6 +1222,7 @@ func verify_recovery():
 	checks.store_string(JSON.print({"version":"0.5.25","passed":passed,"checks":["native early six SMG ranged2 vs HP9 and affordable tier1 upgrade DPS normalization","recovery gates","real defeat evidence","speed/attack/range floors","support upgrade at full slots","no extra support at open slots","incoming projectile collision","real wave16 shop budget regression","reroll purchase reserve / budget / iteration limits","early economy preserved","native shotgun/SMG slot caps and merge","sharp bullet synergy","avoid bounce damage loss for piercing trial","native slash resources","full warning sweep footprint / safe lane","rotated and offset slash transform","real sharp bullet plus triple bandana regression","duplicate synergy diminishing returns","warning escape before native active interval","already active slash stays dangerous","wall infeasible moves rejected","real lethal corner24/36 escape allowed","native barricade stationary armor excluded while moving","unconditional speed penalty retained","real four SMG empty-slot deadlock regression","temporary sixth SMG and later shotgun accepted","native full-loadout marginal upgrade valuation","early slot filling retains priority","real armor offer accepted / weaker marginal weapon rejected","unified item and weapon admission threshold","inside-threat fast escape vs deeper crossing duration","stationary and delayed activation contact fractions","real higher-tier offer admitted after lower-tier merge","shotgun pair-to-higher-tier purchase admitted","native bait extra7-8 enemies risk detected","native weird ghost forced-low-health risk detected","same-cell nearfield normal bodies retained independently","same-cell boss body and velocity retained independently","native separate boss list included","native charmed-enemy exclusion retained"]}))
 	checks.close()
 	policy.brawler = selected_brawler
+	policy.character = saved_character_policy
 	gun_profile = selected_profile
 	record("recovery_selfcheck", {"passed":passed})
 	if not passed:

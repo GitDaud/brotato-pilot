@@ -2,6 +2,7 @@ extends Reference
 
 var armor_bias = 1.0
 var brawler = false
+var character = "character_well_rounded"
 
 # Thresholds are pilot heuristics, not game rules or guide-prescribed breakpoints.
 func weights(stats, wave):
@@ -31,6 +32,18 @@ func weights(stats, wave):
 		result["stat_range"] = 0.35 if stats.get("stat_range",0) < 0 else 0.08
 	# Luck improves native loot and tier rolls; recovering negative luck matters.
 	result["stat_luck"] = (0.7 if wave < 12 else 0.3) * (1.5 if stats.get("stat_luck",0) < 0 else 1.0) * (1.0+min(0.5,stats.get("trees",0)*0.1))
+	if character == "character_apprentice":
+		result["stat_max_hp"] *= 1.8 # Every level costs 2 native HP.
+	if character == "character_lich":
+		result["stat_max_hp"] += 1.0 # Healing-triggered damage scales with HP.
+		result["stat_hp_regeneration"] *= 1.5
+		result["stat_lifesteal"] *= 1.5
+	if character == "character_chunky":
+		result["stat_max_hp"] += 0.3 # Native damage per 3 permanent HP.
+		result["stat_lifesteal"] = 0.0
+		result["stat_speed"] = 0.0
+	if character == "character_explorer":
+		result["stat_percent_damage"] = 1.3
 	return result
 
 func harvesting_return(current, delta, wave, growth = 5.0):
@@ -67,12 +80,16 @@ func score_effects(effects, stats, wave):
 		# A capped bonus must not make its corresponding drawback free.
 		if e.value < 0:
 			weight = max(weight, {"stat_max_hp":2.8,"stat_armor":5.0,"stat_ranged_damage":6.0,"stat_melee_damage":4.0,"stat_speed":1.2,"stat_attack_speed":1.0,"stat_lifesteal":2.0}.get(e.key, 0.0))
-		var effective_value = float(e.value)
+		var effective_value = float(e.value)*stats.get("stat_gains",{}).get(e.key,1.0)
+		if e.key == "stat_lifesteal":
+			var current = float(stats.get("stat_lifesteal",0))
+			effective_value = clamp(current+effective_value,0.0,100.0)-clamp(current,0.0,100.0)
 		if e.key == "stat_dodge":
 			# Count only usable dodge, including losses hidden by existing excess.
 			weight = 2.0 if brawler else 0.9
-			effective_value = clamp(scored_dodge + e.value,0.0,60.0) - clamp(scored_dodge,0.0,60.0)
-			scored_dodge += e.value
+			var dodge_delta = effective_value
+			effective_value = clamp(scored_dodge + dodge_delta,0.0,60.0) - clamp(scored_dodge,0.0,60.0)
+			scored_dodge += dodge_delta
 		score += effective_value * weight
 	return score
 
