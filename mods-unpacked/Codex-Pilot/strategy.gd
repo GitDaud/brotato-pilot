@@ -85,10 +85,10 @@ func score_effects(effects, stats, wave):
 			var current = float(stats.get("stat_lifesteal",0))
 			effective_value = clamp(current+effective_value,0.0,100.0)-clamp(current,0.0,100.0)
 		if e.key == "stat_dodge":
-			# Count only usable dodge, including losses hidden by existing excess.
+			# Negative dodge has no native chance, but creates a future repair cost.
 			weight = 2.0 if brawler else 0.9
 			var dodge_delta = effective_value
-			effective_value = clamp(scored_dodge + dodge_delta,0.0,60.0) - clamp(scored_dodge,0.0,60.0)
+			effective_value = min(scored_dodge + dodge_delta,60.0) - min(scored_dodge,60.0)
 			scored_dodge += dodge_delta
 		score += effective_value * weight
 	return score

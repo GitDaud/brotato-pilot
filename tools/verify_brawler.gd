@@ -23,6 +23,8 @@ func _init():
 	var dodge_gain = {"key":"stat_dodge","value":9,"custom_key":""}
 	check(policy.score_effects([dodge_gain],{"stat_dodge":55},16) == 10.0, "55 to 64 counts only five usable dodge")
 	check(policy.score_effects([dodge_gain],{"stat_dodge":60},16) == 0.0, "capped dodge has no gain")
+	check(policy.score_effects([dodge_gain],{"stat_dodge":-15},16) == 18.0, "negative dodge repair retains value")
+	check(policy.score_effects([{"key":"stat_dodge","value":-10,"custom_key":""}],{"stat_dodge":0},16) == -20.0, "negative dodge debt is charged")
 	check(policy.score_effects([{"key":"stat_dodge","value":-10,"custom_key":""}],{"stat_dodge":64},16) == -12.0, "dodge loss below cap still costs value")
 	check(policy.movement_target_allowed(true,420.0), "nearby tree pursued")
 	check(not policy.movement_target_allowed(true,421.0), "distant tree does not suppress XP")

@@ -321,6 +321,13 @@ func synergy_bonus(item_id, owned_ids = []):
 func weapon_value(item, weapons):
 	if policy.brawler:
 		return 150.0 + item.tier * 35.0 if item.weapon_id == "weapon_fist" else -1.0
+	# Ranger starts with a pistol in addition to the selected gun. Permit native
+	# pair upgrades of that existing pistol rather than unrelated pistol tiers.
+	if policy.character == "character_ranger" and item.weapon_id == "weapon_pistol":
+		for owned in weapons:
+			if owned.my_id == item.my_id and owned.upgrades_into != null:
+				return 150.0 + item.tier * 35.0
+		return -1.0
 	if gun_profile == "smg_shotgun":
 		var caps = {"weapon_smg":4,"weapon_double_barrel_shotgun":2}
 		if not caps.has(item.weapon_id):
