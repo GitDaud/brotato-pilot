@@ -3,6 +3,7 @@ extends Reference
 var armor_bias = 1.0
 var brawler = false
 var character = "character_well_rounded"
+var body_horizon = 0.30
 
 # Thresholds are pilot heuristics, not game rules or guide-prescribed breakpoints.
 func weights(stats, wave):
@@ -110,6 +111,21 @@ func imminent_contact(offset, relative_velocity):
 		return false
 	var time = clamp(-offset.dot(relative_velocity)/relative_velocity.length_squared(),0.0,0.30)
 	return (offset+relative_velocity*time).length_squared() <= 80.0*80.0
+
+func new_contact_penalty(offset, velocity, radius, active_from, active_to, fraction):
+	if fraction <= 0.0:
+		return 0.0
+	# A brief new intersection still deals a full native hit. Existing overlap
+	# keeps the escape-duration model, so staying inside is never rewarded.
+	if active_from <= 0.0 and offset.length_squared() <= radius*radius:
+		return 0.0
+	var a = velocity.length_squared()
+	var entry = active_from
+	if a > 0.01:
+		var projection = offset.dot(velocity)
+		var disc = max(0.0,projection*projection-a*(offset.length_squared()-radius*radius))
+		entry = max(active_from,(-projection-sqrt(disc))/a)
+	return 12000.0 * (1.0-0.5*clamp(entry/max(0.01,active_to),0.0,1.0))
 
 # Conservative pilot estimates, not native guaranteed returns. Price is charged
 # before admitting an investment; late shops therefore lose economic priority.

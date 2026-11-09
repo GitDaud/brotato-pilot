@@ -127,7 +127,7 @@ func _ready():
 	button.text = "Codex Pilot ON / OFF"
 	button.connect("pressed", self, "toggle")
 	box.add_child(button)
-	record("loaded", {"version":"0.6.7-dev","profile":gun_profile,"development_speed":development_speed})
+	record("loaded", {"version":"0.6.8-dev","profile":gun_profile,"development_speed":development_speed})
 	verify_recovery()
 
 func toggle():
@@ -592,7 +592,7 @@ func add_threat(cells, point, pos, radius, bullet = false, velocity = Vector2.ZE
 	var cell = ((point - pos) / 96.0).floor()
 	var key = Vector3(cell.x, cell.y, 1 if bullet else 0)
 	if not cells.has(key):
-		cells[key] = [point, radius, 1, velocity]
+		cells[key] = [point, radius, 1, velocity, 0.0, 0.65 if bullet else policy.body_horizon]
 	else:
 		var entry = cells[key]
 		entry[2] += 1
@@ -645,7 +645,9 @@ func danger_path(pos, velocity, threats):
 			risk += 450000.0 / max(400.0, distance_squared)
 			# Closest-distance-only assigns identical impact severity when already
 			# overlapping, even if one direction escapes and another stays inside.
-			risk += 10000.0 * contact_fraction(offset,relative_velocity,radius,active_from,active_to)
+			var fraction = contact_fraction(offset,relative_velocity,radius,active_from,active_to)
+			risk += 10000.0 * fraction
+			risk += policy.new_contact_penalty(offset,relative_velocity,radius,active_from,active_to,fraction)
 	return risk
 
 # Native slash animations sweep x=-152..163 around Hitbox local y=18.
@@ -742,7 +744,7 @@ func add_body_threat(cells, bosses, point, pos, velocity, is_boss):
 	# Preserve individual collision geometry in the immediate body-contact region.
 	if is_boss or pos.distance_squared_to(point) <= 180.0 * 180.0:
 		if pos.distance_squared_to(point) <= 420.0 * 420.0:
-			bosses.append([point,72.0,1,velocity])
+			bosses.append([point,72.0,1,velocity,0.0,0.65 if is_boss else policy.body_horizon])
 	else:
 		add_threat(cells,point,pos,72.0,false,velocity)
 
@@ -935,7 +937,7 @@ func steer(player):
 	var initial_distance = pos.distance_to(target)
 	var candidate_details = []
 	for v in directions:
-		if not boundary_allows(pos,pos + v * speed * 0.65,bounds):
+		if not boundary_allows(pos,pos + v * speed * policy.body_horizon,bounds):
 			continue
 		var score = v.dot(previous_direction) * 6.0
 		# Reward actual progress toward a material cluster, in world-space units.
@@ -979,7 +981,7 @@ func report(scene):
 			state["hp"] = p.current_stats.health
 			state["max_hp"] = p.max_stats.health
 			state["position"] = [p.global_position.x,p.global_position.y]
-	state["strategy_version"] = "0.6.7-dev"
+	state["strategy_version"] = "0.6.8-dev"
 	state["profile"] = gun_profile
 	state["character"] = selected_character
 	state["run_id"] = recording_id
@@ -1106,7 +1108,7 @@ func _exit_tree():
 
 func analyze_run():
 	var analysis = policy.analyze(recent_combat, RunData.current_wave)
-	analysis["strategy_version"] = "0.6.7-dev"
+	analysis["strategy_version"] = "0.6.8-dev"
 	analysis["run_id"] = recording_id
 	analysis["gun_profile"] = gun_profile
 	analysis["character"] = selected_character
@@ -1264,6 +1266,10 @@ func verify_recovery():
 	native_spawner.bosses = [boss_marker]
 	native_spawner.charmed_enemies = [charmed_marker]
 	var test_body_cells = {}
+	var crowded_corner = Vector2(263.717957,1231.81189)
+	var crowded_bounds = Rect2(45,45,1958,1446)
+	passed = passed and boundary_allows(crowded_corner,crowded_corner+Vector2.DOWN*558*policy.body_horizon,crowded_bounds)
+	passed = passed and not boundary_allows(crowded_corner,crowded_corner+Vector2.DOWN*558*0.65,crowded_bounds)
 	var test_boss_bodies = []
 	add_body_threat(test_body_cells,test_boss_bodies,Vector2(240,240),Vector2.ZERO,Vector2(-500,0),true)
 	add_body_threat(test_body_cells,test_boss_bodies,Vector2(200,200),Vector2.ZERO,Vector2.ZERO,false)

@@ -82,6 +82,9 @@ func _init():
 	check(policy.imminent_contact(Vector2(200,0),Vector2(-600,0)), "incoming pursuer triggers emergency aim")
 	check(not policy.imminent_contact(Vector2(200,0),Vector2(600,0)), "retreating enemy does not interrupt boss focus")
 	check(not policy.imminent_contact(Vector2(200,0),Vector2(0,600)), "passing enemy outside contact band does not interrupt")
+	check(policy.new_contact_penalty(Vector2(100,0),Vector2(-600,0),72,0,0.65,0.2) >= 6000, "brief new body crossing still costs a hit")
+	check(policy.new_contact_penalty(Vector2(30,0),Vector2(600,0),72,0,0.65,0.1) == 0, "existing overlap retains fast escape model")
+	check(policy.new_contact_penalty(Vector2.ZERO,Vector2(0,300),42,0.48,0.6,0) == 0, "escape before activation avoids new hit cost")
 	policy.character = "character_chunky"
 	check(policy.score_effects([{"key":"stat_speed","value":3,"custom_key":""}],{"stat_speed":0,"stat_gains":{"stat_speed":0}},3) == 0.0, "chunky cannot buy speed gains")
 	check(policy.score_effects([{"key":"stat_lifesteal","value":5,"custom_key":""}],{"stat_lifesteal":-100},3) == 0.0, "chunky unusable lifesteal not valued")
