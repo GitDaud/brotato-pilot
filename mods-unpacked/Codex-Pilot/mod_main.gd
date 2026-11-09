@@ -127,7 +127,7 @@ func _ready():
 	button.text = "Codex Pilot ON / OFF"
 	button.connect("pressed", self, "toggle")
 	box.add_child(button)
-	record("loaded", {"version":"0.6.5-dev","profile":gun_profile,"development_speed":development_speed})
+	record("loaded", {"version":"0.6.6-dev","profile":gun_profile,"development_speed":development_speed})
 	verify_recovery()
 
 func toggle():
@@ -328,13 +328,25 @@ func weapon_value(item, weapons):
 			if owned.my_id == item.my_id and owned.upgrades_into != null:
 				return 150.0 + item.tier * 35.0
 		return -1.0
+	if policy.character == "character_ranger" and item.weapon_id == "weapon_shredder":
+		var support_count = 0
+		var support_match = false
+		for owned in weapons:
+			if owned.weapon_id == "weapon_shredder":
+				support_count += 1
+				if owned.my_id == item.my_id and item.upgrades_into != null:
+					support_match = true
+		return 175.0 + item.tier * 35.0 if support_count == 0 or (support_count == 1 and weapons.size() >= 6 and support_match) else -1.0
 	if gun_profile == "smg_shotgun":
 		var caps = {"weapon_smg":4,"weapon_double_barrel_shotgun":2}
 		if not caps.has(item.weapon_id):
 			return -1.0
 		var count = 0
 		var matching = false
+		var has_starter_pistol = false
 		for owned in weapons:
+			if policy.character == "character_ranger" and owned.weapon_id == "weapon_pistol":
+				has_starter_pistol = true
 			if owned.weapon_id == item.weapon_id:
 				count += 1
 				if owned.my_id == item.my_id and item.upgrades_into != null:
@@ -350,7 +362,7 @@ func weapon_value(item, weapons):
 						matching = true
 		# 4+2 is a target composition, not permission to fight with empty slots.
 		# Temporary SMGs can be combined normally when a shotgun later appears.
-		var temporary_smg = item.weapon_id == "weapon_smg" and weapons.size() < 6
+		var temporary_smg = item.weapon_id == "weapon_smg" and (weapons.size() < 6 or has_starter_pistol)
 		if count >= caps[item.weapon_id] and not temporary_smg and not (weapons.size() >= 6 and matching):
 			return -1.0
 		return (175.0 if item.weapon_id == "weapon_double_barrel_shotgun" else 150.0) + item.tier * 35.0
@@ -393,6 +405,16 @@ func loadout_dps(weapons, ranged):
 		total += base_gun_dps(owned,ranged)
 	return total
 
+func ranger_replacement(item, weapons, stats):
+	if policy.character != "character_ranger" or weapons.size() != 6 or not item.weapon_id in ["weapon_smg","weapon_double_barrel_shotgun","weapon_shredder"]:
+		return null
+	var ranged = float(stats.get("stat_ranged_damage",0))
+	for owned in weapons:
+		# Require a real direct-DPS improvement, not only a fixed support bonus.
+		if owned.weapon_id == "weapon_pistol" and base_gun_dps(item,ranged) > base_gun_dps(owned,ranged)*1.25:
+			return owned
+	return null
+
 func direct_gain_score(gain, baseline, stats):
 	return gain / max(0.1,baseline) * max(1.0,100.0+stats.get("stat_percent_damage",0)) * 0.9
 
@@ -407,10 +429,18 @@ func marginal_weapon_score(item, weapons, stats, wave):
 	if weapons.size() < 6:
 		return weapon_value(item,weapons)
 	var ranged = float(stats.get("stat_melee_damage" if policy.brawler else "stat_ranged_damage",0))
-	var gain = -1.0
+	var direct_merge_gain = -1.0
 	for owned in weapons:
 		if owned.my_id == item.my_id and owned.upgrades_into != null:
-			gain = max(gain,base_gun_dps(owned.upgrades_into,ranged)-base_gun_dps(owned,ranged))
+			direct_merge_gain = max(direct_merge_gain,base_gun_dps(owned.upgrades_into,ranged)-base_gun_dps(owned,ranged))
+	# A directly buyable duplicate uses native auto-combine; score that action.
+	if direct_merge_gain > 0.0:
+		return direct_gain_score(direct_merge_gain,loadout_dps(weapons,ranged),stats)
+	var gain = -1.0
+	var replacement = ranger_replacement(item,weapons,stats)
+	if replacement != null:
+		gain = base_gun_dps(item,ranged)-base_gun_dps(replacement,ranged)
+	for owned in weapons:
 		var copies = 0
 		for other in weapons:
 			if other.my_id == owned.my_id:
@@ -488,7 +518,7 @@ func shop(scene):
 				record("shop_rejected", {"wave":RunData.current_wave,"id":item.my_id,"cost":n.value,"gold":gold,"score":score,"reason":"weapon_value_threshold"})
 				continue
 			if not shop_items._can_weapon_be_bought(n):
-				var can_make_slot = false
+				var can_make_slot = ranger_replacement(item,weapons,shop_stats) != null and not RunData.get_player_effect_bool(Keys.lock_current_weapons_hash,0)
 				if weapons.size() >= 6 and not RunData.has_weapon_slot_available(item,0):
 					for owned in weapons:
 						if RunData.can_combine(owned,0):
@@ -518,6 +548,19 @@ func shop(scene):
 					if gain > merge_gain:
 						merge_gain = gain
 						merge_weapon = owned
+			var replacement = ranger_replacement(best.item_data,weapons,shop_stats)
+			if replacement != null and -base_gun_dps(replacement,shop_stats.get("stat_ranged_damage",0)) >= merge_gain and not RunData.get_player_effect_bool(Keys.lock_current_weapons_hash,0):
+				var planned_id = best.item_data.my_id
+				record("replace_weapon",{"sold":replacement.my_id,"planned_buy":planned_id,"cost":best.value,"gold":gold})
+				scene._on_item_discard_button_pressed(replacement,0)
+				# Native recycling refreshes the shop controls. Reacquire the offer.
+				for offer in scene._get_shop_items_container(0)._shop_items:
+					if is_instance_valid(offer) and offer.active and offer.item_data.my_id == planned_id and offer.value <= RunData.get_player_currency(0) and scene._get_shop_items_container(0)._can_weapon_be_bought(offer):
+						record("buy",{"id":planned_id,"cost":offer.value,"reason":"committed_pistol_replacement"})
+						offer._on_BuyButton_pressed()
+						return
+				record("replacement_offer_unavailable",{"id":planned_id})
+				return
 			if merge_weapon != null:
 				pending_shop_buy = best
 				record("combine", {"id":merge_weapon.my_id,"planned_buy":best.item_data.my_id,"ranked_before_merge":true,"merge_dps_delta":merge_gain})
@@ -529,7 +572,7 @@ func shop(scene):
 		best._on_BuyButton_pressed()
 		return
 	var reroll_cost = scene._reroll_price[0]
-	var reserve = 20 + RunData.current_wave * 3 if RunData.current_wave < 8 else 100 + RunData.current_wave * 8
+	var reserve = policy.shop_reserve(RunData.current_wave)
 	if not scene._get_reroll_button(0).disabled and policy.can_reroll(gold, reroll_cost, shop_rolls, weapons.size(), RunData.current_wave, shop_opening_gold, shop_reroll_spent):
 		shop_rolls += 1
 		shop_reroll_spent += reroll_cost
@@ -931,7 +974,7 @@ func report(scene):
 			state["hp"] = p.current_stats.health
 			state["max_hp"] = p.max_stats.health
 			state["position"] = [p.global_position.x,p.global_position.y]
-	state["strategy_version"] = "0.6.5-dev"
+	state["strategy_version"] = "0.6.6-dev"
 	state["profile"] = gun_profile
 	state["character"] = selected_character
 	state["run_id"] = recording_id
@@ -1058,7 +1101,7 @@ func _exit_tree():
 
 func analyze_run():
 	var analysis = policy.analyze(recent_combat, RunData.current_wave)
-	analysis["strategy_version"] = "0.6.5-dev"
+	analysis["strategy_version"] = "0.6.6-dev"
 	analysis["run_id"] = recording_id
 	analysis["gun_profile"] = gun_profile
 	analysis["character"] = selected_character
@@ -1179,6 +1222,13 @@ func verify_recovery():
 	passed = passed and weapon_value(actual_smg,[actual_smg,actual_smg,actual_smg,actual_smg,actual_smg]) > 0
 	passed = passed and weapon_value(shotgun,[actual_smg,actual_smg,actual_smg,actual_smg,actual_smg,actual_smg]) > 0
 	var smg3 = load("res://weapons/ranged/smg/3/smg_3_data.tres")
+	var pistol = load("res://weapons/ranged/pistol/1/pistol_data.tres")
+	policy.character = "character_ranger"
+	passed = passed and ranger_replacement(smg3,[pistol,actual_smg,actual_smg,actual_smg,shotgun,shotgun],{"stat_ranged_damage":9}) == pistol
+	passed = passed and ranger_replacement(actual_smg,[pistol,actual_smg],{"stat_ranged_damage":9}) == null
+	passed = passed and ranger_replacement(smg3,[actual_smg,actual_smg,actual_smg,actual_smg,shotgun,shotgun],{"stat_ranged_damage":9}) == null
+	policy.character = "character_well_rounded"
+	passed = passed and ranger_replacement(smg3,[pistol,actual_smg,actual_smg,actual_smg,shotgun,shotgun],{"stat_ranged_damage":9}) == null
 	var weak_body = {"stat_ranged_damage":6,"stat_armor":1}
 	var advanced_guns = [smg3,actual_smg,actual_smg,actual_smg,shotgun,shotgun]
 	var upgrade_points = marginal_weapon_score(smg3,advanced_guns,weak_body,11)

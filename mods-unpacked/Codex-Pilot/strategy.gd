@@ -38,6 +38,8 @@ func weights(stats, wave):
 	result["stat_luck"] = (0.7 if wave < 12 else 0.3) * (1.5 if stats.get("stat_luck",0) < 0 else 1.0) * (1.0+min(0.5,stats.get("trees",0)*0.1))
 	if character == "character_apprentice":
 		result["stat_max_hp"] *= 1.8 # Every level costs 2 native HP.
+	if character == "character_ranger" and wave >= 8 and stats.get("stat_armor",0) < armor_target:
+		result["stat_armor"] *= 1.5 # Preserve a buffer against consecutive body hits.
 	if character == "character_lich":
 		result["stat_max_hp"] += 1.0 # Healing-triggered damage scales with HP.
 		result["stat_hp_regeneration"] *= 1.5
@@ -170,10 +172,16 @@ func breaks_floor(key, delta, stats, wave):
 
 # Spend a bounded part of the shop's opening funds searching for useful items.
 # Keep enough currency to buy an offer instead of consuming everything in rerolls.
+func shop_reserve(wave):
+	if wave < 8:
+		return 20 + wave * 3
+	# No later shop to fund after wave 19. Saver is currency-dependent.
+	return 60 if wave >= 19 and character != "character_saver" else 100 + wave * 8
+
 func can_reroll(gold, cost, rolls, weapon_count, wave, opening_gold, spent):
 	if wave < 8:
 		return rolls < (6 if weapon_count < 6 else 3) and (cost == 0 or gold >= 20 + wave * 3 + cost)
-	var reserve = 100 + wave * 8
+	var reserve = shop_reserve(wave)
 	var budget = max(60.0, opening_gold * 0.35)
 	return rolls < 16 and gold >= reserve + cost and spent + cost <= budget
 
