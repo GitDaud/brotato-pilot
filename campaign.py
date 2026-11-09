@@ -1,4 +1,4 @@
-"""Run distinct unlocked characters at native Danger 5; stop for defeat review.
+"""Run the next character at Danger 5 on its own branch, then stop for review/merge.
 
 Only reads native saves. Progress and unlocks must be earned by the game.
 Create run/campaign-stop to stop; restarting requires deleting that stop file.
@@ -96,6 +96,13 @@ def main():
             return
         if any(char == character for char, zone in wins):
             continue
+        branch = subprocess.run(['git', 'branch', '--show-current'], cwd=ROOT,
+                                capture_output=True, text=True, check=True).stdout.strip()
+        expected_branch = 'feature/' + short_name + '-strategy'
+        if branch != expected_branch:
+            write_status('branch_required', character=character,
+                         expected_branch=expected_branch, actual_branch=branch)
+            return
         (RUN / 'challenge.json').write_text(json.dumps(dict(
             enabled=True, difficulty=5, profile='ranged', character=character,
             weapon='weapon_smg')), encoding='utf-8')
@@ -143,14 +150,9 @@ def main():
                     if unlocked:
                         write_status('complete', character=character, run_id=state.get('run_id'))
                         return
-                    close_game(pid)
-                    deadline = time.monotonic()+15
-                    while alive(pid) and time.monotonic() < deadline:
-                        time.sleep(0.5)
-                    if alive(pid):
-                        write_status('review_required', character=character, reason='close_pending')
-                        return
-                    break
+                    write_status('character_complete', character=character,
+                                 run_id=state.get('run_id'), reason='merge_branch_before_next_character')
+                    return
             if time.time()-launched_at > 3600:
                 write_status('review_required', character=character, reason='run_timeout')
                 return
