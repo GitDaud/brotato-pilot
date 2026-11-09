@@ -2,6 +2,8 @@ extends Reference
 
 var armor_bias = 1.0
 var brawler = false
+var character = "character_well_rounded"
+var body_horizon = 0.30
 
 # Thresholds are pilot heuristics, not game rules or guide-prescribed breakpoints.
 func weights(stats, wave):
@@ -22,6 +24,10 @@ func weights(stats, wave):
 		"stat_harvesting": (1.1 if stats.get("stat_harvesting", 0) < 25 else 0.35) if wave <= 6 else (0.25 if wave <= 12 else 0.0),
 		"stat_luck": 0.3 if wave < 10 and stats.get("stat_luck", 0) < 15 else 0.05
 	}
+	# Being far below the existing HP target is more urgent than a small deficit.
+	# Especially important for Ranger's native reduced HP gains; also charge HP
+	# drawbacks at the same marginal utility instead of buying away the buffer.
+	result["stat_max_hp"] *= clamp(hp_target / max(1.0,float(stats.get("stat_max_hp",hp_target))),1.0,3.0)
 
 	if brawler:
 		result["stat_ranged_damage"] = 0.0
@@ -31,6 +37,20 @@ func weights(stats, wave):
 		result["stat_range"] = 0.35 if stats.get("stat_range",0) < 0 else 0.08
 	# Luck improves native loot and tier rolls; recovering negative luck matters.
 	result["stat_luck"] = (0.7 if wave < 12 else 0.3) * (1.5 if stats.get("stat_luck",0) < 0 else 1.0) * (1.0+min(0.5,stats.get("trees",0)*0.1))
+	if character == "character_apprentice":
+		result["stat_max_hp"] *= 1.8 # Every level costs 2 native HP.
+	if character == "character_ranger" and wave >= 8 and stats.get("stat_armor",0) < armor_target:
+		result["stat_armor"] *= 1.5 # Preserve a buffer against consecutive body hits.
+	if character == "character_lich":
+		result["stat_max_hp"] += 1.0 # Healing-triggered damage scales with HP.
+		result["stat_hp_regeneration"] *= 1.5
+		result["stat_lifesteal"] *= 1.5
+	if character == "character_chunky":
+		result["stat_max_hp"] += 0.3 # Native damage per 3 permanent HP.
+		result["stat_lifesteal"] = 0.0
+		result["stat_speed"] = 0.0
+	if character == "character_explorer":
+		result["stat_percent_damage"] = 1.3
 	return result
 
 func harvesting_return(current, delta, wave, growth = 5.0):
@@ -67,18 +87,45 @@ func score_effects(effects, stats, wave):
 		# A capped bonus must not make its corresponding drawback free.
 		if e.value < 0:
 			weight = max(weight, {"stat_max_hp":2.8,"stat_armor":5.0,"stat_ranged_damage":6.0,"stat_melee_damage":4.0,"stat_speed":1.2,"stat_attack_speed":1.0,"stat_lifesteal":2.0}.get(e.key, 0.0))
-		var effective_value = float(e.value)
+		var effective_value = float(e.value)*stats.get("stat_gains",{}).get(e.key,1.0)
+		if e.key == "stat_lifesteal":
+			var current = float(stats.get("stat_lifesteal",0))
+			effective_value = min(current+effective_value,100.0)-min(current,100.0)
 		if e.key == "stat_dodge":
-			# Count only usable dodge, including losses hidden by existing excess.
+			# Negative dodge has no native chance, but creates a future repair cost.
 			weight = 2.0 if brawler else 0.9
-			effective_value = clamp(scored_dodge + e.value,0.0,60.0) - clamp(scored_dodge,0.0,60.0)
-			scored_dodge += e.value
+			var dodge_delta = effective_value
+			effective_value = min(scored_dodge + dodge_delta,60.0) - min(scored_dodge,60.0)
+			scored_dodge += dodge_delta
 		score += effective_value * weight
 	return score
 
 func movement_target_allowed(is_tree, distance):
 	# Nearby trees remain high priority; distant trees must not suppress XP pickup.
 	return not is_tree or distance <= 420.0
+
+func imminent_contact(offset, relative_velocity):
+	if offset.length_squared() <= 80.0*80.0:
+		return true
+	if relative_velocity.length_squared() < 0.01 or offset.dot(relative_velocity) >= 0:
+		return false
+	var time = clamp(-offset.dot(relative_velocity)/relative_velocity.length_squared(),0.0,0.30)
+	return (offset+relative_velocity*time).length_squared() <= 80.0*80.0
+
+func new_contact_penalty(offset, velocity, radius, active_from, active_to, fraction):
+	if fraction <= 0.0:
+		return 0.0
+	# A brief new intersection still deals a full native hit. Existing overlap
+	# keeps the escape-duration model, so staying inside is never rewarded.
+	if active_from <= 0.0 and offset.length_squared() <= radius*radius:
+		return 0.0
+	var a = velocity.length_squared()
+	var entry = active_from
+	if a > 0.01:
+		var projection = offset.dot(velocity)
+		var disc = max(0.0,projection*projection-a*(offset.length_squared()-radius*radius))
+		entry = max(active_from,(-projection-sqrt(disc))/a)
+	return 12000.0 * (1.0-0.5*clamp(entry/max(0.01,active_to),0.0,1.0))
 
 # Conservative pilot estimates, not native guaranteed returns. Price is charged
 # before admitting an investment; late shops therefore lose economic priority.
@@ -149,10 +196,16 @@ func breaks_floor(key, delta, stats, wave):
 
 # Spend a bounded part of the shop's opening funds searching for useful items.
 # Keep enough currency to buy an offer instead of consuming everything in rerolls.
+func shop_reserve(wave):
+	if wave < 8:
+		return 20 + wave * 3
+	# No later shop to fund after wave 19. Saver is currency-dependent.
+	return 60 if wave >= 19 and character != "character_saver" else 100 + wave * 8
+
 func can_reroll(gold, cost, rolls, weapon_count, wave, opening_gold, spent):
 	if wave < 8:
 		return rolls < (6 if weapon_count < 6 else 3) and (cost == 0 or gold >= 20 + wave * 3 + cost)
-	var reserve = 100 + wave * 8
+	var reserve = shop_reserve(wave)
 	var budget = max(60.0, opening_gold * 0.35)
 	return rolls < 16 and gold >= reserve + cost and spent + cost <= budget
 

@@ -23,6 +23,8 @@ func _init():
 	var dodge_gain = {"key":"stat_dodge","value":9,"custom_key":""}
 	check(policy.score_effects([dodge_gain],{"stat_dodge":55},16) == 10.0, "55 to 64 counts only five usable dodge")
 	check(policy.score_effects([dodge_gain],{"stat_dodge":60},16) == 0.0, "capped dodge has no gain")
+	check(policy.score_effects([dodge_gain],{"stat_dodge":-15},16) == 18.0, "negative dodge repair retains value")
+	check(policy.score_effects([{"key":"stat_dodge","value":-10,"custom_key":""}],{"stat_dodge":0},16) == -20.0, "negative dodge debt is charged")
 	check(policy.score_effects([{"key":"stat_dodge","value":-10,"custom_key":""}],{"stat_dodge":64},16) == -12.0, "dodge loss below cap still costs value")
 	check(policy.movement_target_allowed(true,420.0), "nearby tree pursued")
 	check(not policy.movement_target_allowed(true,421.0), "distant tree does not suppress XP")
@@ -65,6 +67,29 @@ func _init():
 	check((charge[0]+charge[3]*0.2).distance_to(Vector2(10,0)) < 0.01, "delayed charge origin")
 	check(boss.focus_cost(200,0.2,false,false) < boss.focus_cost(200,0.9,false,false), "finish wounded boss")
 	check(boss.focus_cost(200,0.2,true,false) > boss.focus_cost(200,0.2,false,false), "avoid charging boss")
+	var hp_effect = {"key":"stat_max_hp","value":4,"custom_key":""}
+	var normal_hp_score = policy.score_effects([hp_effect],{"stat_max_hp":10},3)
+	check(abs(policy.score_effects([hp_effect],{"stat_max_hp":10,"stat_gains":{"stat_max_hp":0.75}},3)-normal_hp_score*0.75) < 0.001, "native ranger HP gain multiplier")
+	check(policy.weights({"stat_max_hp":15},9)["stat_max_hp"] > policy.weights({"stat_max_hp":40},9)["stat_max_hp"], "severe HP deficit has greater urgency")
+	policy.character = "character_ranger"
+	check(policy.weights({"stat_armor":3},14)["stat_armor"] > policy.weights({"stat_armor":9},14)["stat_armor"], "ranger repairs midgame armor deficit")
+	check(policy.can_reroll(188,29,2,6,19,854,49), "real final shop can search with otherwise unused money")
+	check(not policy.can_reroll(188,29,2,6,18,854,49), "earlier shop keeps next-wave reserve")
+	check(not policy.can_reroll(188,29,2,6,19,854,290), "final shop still respects reroll budget")
+	policy.brawler = false
+	check(policy.score_effects([{"key":"stat_lifesteal","value":-3,"custom_key":""}],{"stat_lifesteal":0},11) < 0.0, "negative lifesteal debt costs value")
+	check(policy.score_effects([{"key":"stat_lifesteal","value":2,"custom_key":""}],{"stat_lifesteal":-3},11) > 0.0, "partial lifesteal repair has value")
+	check(policy.imminent_contact(Vector2(200,0),Vector2(-600,0)), "incoming pursuer triggers emergency aim")
+	check(not policy.imminent_contact(Vector2(200,0),Vector2(600,0)), "retreating enemy does not interrupt boss focus")
+	check(not policy.imminent_contact(Vector2(200,0),Vector2(0,600)), "passing enemy outside contact band does not interrupt")
+	check(policy.new_contact_penalty(Vector2(100,0),Vector2(-600,0),72,0,0.65,0.2) >= 6000, "brief new body crossing still costs a hit")
+	check(policy.new_contact_penalty(Vector2(30,0),Vector2(600,0),72,0,0.65,0.1) == 0, "existing overlap retains fast escape model")
+	check(policy.new_contact_penalty(Vector2.ZERO,Vector2(0,300),42,0.48,0.6,0) == 0, "escape before activation avoids new hit cost")
+	policy.character = "character_chunky"
+	check(policy.score_effects([{"key":"stat_speed","value":3,"custom_key":""}],{"stat_speed":0,"stat_gains":{"stat_speed":0}},3) == 0.0, "chunky cannot buy speed gains")
+	check(policy.score_effects([{"key":"stat_lifesteal","value":5,"custom_key":""}],{"stat_lifesteal":-100},3) == 0.0, "chunky unusable lifesteal not valued")
+	policy.character = "character_apprentice"
+	check(policy.weights({},3)["stat_max_hp"] > 3.2, "apprentice offsets HP loss per level")
 	if failures > 0:
 		quit(1)
 		return

@@ -51,6 +51,9 @@ var body_forecasts = {}
 var forecast_msec = 0
 var forecast_player_position = Vector2.ZERO
 var recording_id = ""
+var recording_enabled = false
+var selected_character = "character_well_rounded"
+var selected_weapon = "weapon_smg"
 var recording_ended = false
 var recording_end_at = -1.0
 var recording_label
@@ -72,9 +75,13 @@ func _ready():
 			var requested = int(argument.get_slice("=",1))
 			if requested in [1,2,4]:
 				development_speed = requested
+		if argument == "--pilot-record=1":
+			recording_enabled = true
 	if "--pilot-profile=brawler" in OS.get_cmdline_args():
 		gun_profile = "brawler_fists"
 		policy.brawler = true
+		selected_character = "character_brawler"
+		selected_weapon = "weapon_fist"
 	get_viewport().hdr = false
 	OS.set_window_size(Vector2(1920,1080))
 	var challenge_file = File.new()
@@ -83,6 +90,9 @@ func _ready():
 		challenge_file.close()
 		if challenge is Dictionary and challenge.get("enabled", false):
 			challenge_difficulty = int(clamp(challenge.get("difficulty", 1), 0, 5))
+			selected_character = str(challenge.get("character",selected_character))
+			selected_weapon = str(challenge.get("weapon",selected_weapon))
+	policy.character = selected_character
 	var settings_file = File.new()
 	if settings_file.open(evidence + "/adaptation.json", File.READ) == OK:
 		var saved = parse_json(settings_file.get_as_text())
@@ -117,7 +127,7 @@ func _ready():
 	button.text = "Codex Pilot ON / OFF"
 	button.connect("pressed", self, "toggle")
 	box.add_child(button)
-	record("loaded", {"version":"0.6.3-dev","profile":gun_profile,"development_speed":development_speed})
+	record("loaded", {"version":"0.6.8-dev","profile":gun_profile,"development_speed":development_speed})
 	verify_recovery()
 
 func toggle():
@@ -162,26 +172,7 @@ func _process(delta):
 		next_report = clock + 1.0
 		report(scene)
 	if finished:
-		if challenge_difficulty >= 0 and scene is BaseEndRun:
-			if RunData.run_won and RunData.current_difficulty < 5 and recording_ended and clock - settlement_at >= 8.0:
-				challenge_difficulty = RunData.current_difficulty + 1
-				var challenge_file = File.new()
-				if challenge_file.open(evidence + "/challenge.json", File.WRITE) == OK:
-					challenge_file.store_string(JSON.print({"enabled":true,"difficulty":challenge_difficulty}))
-					challenge_file.close()
-				record("challenge_advance", {"difficulty":challenge_difficulty})
-				scene._on_NewRunButton_pressed()
-			else:
-				decision = "Challenge complete" if RunData.run_won else "Challenge defeat - review required"
-			return
-		var review_gate = File.new()
-		if review_gate.file_exists(evidence + "/optimization-hold"):
-			decision = "Review required - next run held"
-			return
-		if enabled and scene is BaseEndRun and policy.should_restart(RunData.run_won, settlement_at >= 0, recording_ended, clock - settlement_at):
-			decision = "Analysis saved - starting next run"
-			record("auto_restart", {"previous_run":recording_id})
-			scene._on_NewRunButton_pressed()
+		decision = "Run complete - controller authorization required"
 		return
 	if not enabled or scene_age < 1.5 or clock < next_action:
 		return
@@ -195,10 +186,10 @@ func _process(delta):
 		analyze_run()
 	elif scene is CharacterSelection:
 		if not scene._has_player_selected[0]:
-			select_element(scene, "character_brawler" if policy.brawler else "character_well_rounded")
+			select_element(scene, selected_character)
 	elif scene is WeaponSelection:
 		if not scene._has_player_selected[0]:
-			select_element(scene, "weapon_fist" if policy.brawler else "weapon_smg")
+			select_element(scene, selected_weapon)
 	elif scene is DifficultySelection:
 		if not scene.difficulty_selected:
 			select_element(scene, "difficulty_" + str(challenge_difficulty if challenge_difficulty >= 0 else 0))
@@ -244,10 +235,10 @@ func select_element(scene, preferred):
 		if e.item.my_id == preferred or e.item.my_id.begins_with(preferred + "_") or (scene is DifficultySelection and e.item.value == (challenge_difficulty if challenge_difficulty >= 0 else 0)):
 			selected = e
 			break
-	if policy.brawler and (scene is CharacterSelection or scene is WeaponSelection or scene is DifficultySelection):
+	if scene is CharacterSelection or scene is WeaponSelection or scene is DifficultySelection:
 		if selected == null or not (selected.item.my_id == preferred or selected.item.my_id.begins_with(preferred + "_")):
 			enabled = false
-			decision = "Requested Brawler selection unavailable"
+			decision = "Requested character/weapon/difficulty unavailable"
 			record("selection_unavailable", {"id":preferred})
 			return
 	if selected != null:
@@ -261,6 +252,10 @@ func stat_snapshot():
 		stats[key] = Utils.get_capped_stat(Keys.generate_hash(key), 0) if key == "stat_max_hp" else Utils.get_stat(Keys.generate_hash(key), 0)
 	stats["trees"] = RunData.get_player_effect(Keys.generate_hash("trees"),0)
 	stats["harvesting_growth"] = RunData.get_player_effect(Keys.generate_hash("harvesting_growth"),0)
+	stats["stat_gains"] = {}
+	for key in stats.keys():
+		if str(key).begins_with("stat_") and key != "stat_gains":
+			stats.stat_gains[key] = RunData.get_stat_gain(Keys.generate_hash(key),0)
 	return stats
 
 func observe_healing(source, requested, actual):
@@ -279,7 +274,7 @@ func value_item(item, price = 0):
 	for effect in item.effects:
 		if effect.key == "hp_cap":
 			return -1000.0
-		if effect.value < 0 and policy.breaks_floor(effect.key, effect.value, stats, RunData.current_wave):
+		if effect.value < 0 and policy.breaks_floor(effect.key, effect.value*stats.stat_gains.get(effect.key,1.0), stats, RunData.current_wave):
 			return -1000.0
 		if effect.key == "stat_armor" and effect.value < 0 and stats.get("stat_armor",0) < max(2, RunData.current_wave * 0.6):
 			return -1000.0
@@ -288,7 +283,7 @@ func value_item(item, price = 0):
 	var ranged_delta = 0.0
 	for effect in item.effects:
 		if effect.key == damage_key and effect.custom_key != "temp_stats_while_not_moving":
-			ranged_delta += effect.value
+			ranged_delta += effect.value*stats.stat_gains.get(damage_key,1.0)
 	if ranged_delta != 0.0:
 		var old_weight = policy.weights(stats,RunData.current_wave)[damage_key]
 		if ranged_delta < 0.0:
@@ -326,13 +321,32 @@ func synergy_bonus(item_id, owned_ids = []):
 func weapon_value(item, weapons):
 	if policy.brawler:
 		return 150.0 + item.tier * 35.0 if item.weapon_id == "weapon_fist" else -1.0
+	# Ranger starts with a pistol in addition to the selected gun. Permit native
+	# pair upgrades of that existing pistol rather than unrelated pistol tiers.
+	if policy.character == "character_ranger" and item.weapon_id == "weapon_pistol":
+		for owned in weapons:
+			if owned.my_id == item.my_id and owned.upgrades_into != null:
+				return 150.0 + item.tier * 35.0
+		return -1.0
+	if policy.character == "character_ranger" and item.weapon_id == "weapon_shredder":
+		var support_count = 0
+		var support_match = false
+		for owned in weapons:
+			if owned.weapon_id == "weapon_shredder":
+				support_count += 1
+				if owned.my_id == item.my_id and item.upgrades_into != null:
+					support_match = true
+		return 175.0 + item.tier * 35.0 if support_count == 0 or (support_count == 1 and weapons.size() >= 6 and support_match) else -1.0
 	if gun_profile == "smg_shotgun":
 		var caps = {"weapon_smg":4,"weapon_double_barrel_shotgun":2}
 		if not caps.has(item.weapon_id):
 			return -1.0
 		var count = 0
 		var matching = false
+		var has_starter_pistol = false
 		for owned in weapons:
+			if policy.character == "character_ranger" and owned.weapon_id == "weapon_pistol":
+				has_starter_pistol = true
 			if owned.weapon_id == item.weapon_id:
 				count += 1
 				if owned.my_id == item.my_id and item.upgrades_into != null:
@@ -348,7 +362,7 @@ func weapon_value(item, weapons):
 						matching = true
 		# 4+2 is a target composition, not permission to fight with empty slots.
 		# Temporary SMGs can be combined normally when a shotgun later appears.
-		var temporary_smg = item.weapon_id == "weapon_smg" and weapons.size() < 6
+		var temporary_smg = item.weapon_id == "weapon_smg" and (weapons.size() < 6 or has_starter_pistol)
 		if count >= caps[item.weapon_id] and not temporary_smg and not (weapons.size() >= 6 and matching):
 			return -1.0
 		return (175.0 if item.weapon_id == "weapon_double_barrel_shotgun" else 150.0) + item.tier * 35.0
@@ -391,6 +405,16 @@ func loadout_dps(weapons, ranged):
 		total += base_gun_dps(owned,ranged)
 	return total
 
+func ranger_replacement(item, weapons, stats):
+	if policy.character != "character_ranger" or weapons.size() != 6 or not item.weapon_id in ["weapon_smg","weapon_double_barrel_shotgun","weapon_shredder"]:
+		return null
+	var ranged = float(stats.get("stat_ranged_damage",0))
+	for owned in weapons:
+		# Require a real direct-DPS improvement, not only a fixed support bonus.
+		if owned.weapon_id == "weapon_pistol" and base_gun_dps(item,ranged) > base_gun_dps(owned,ranged)*1.25:
+			return owned
+	return null
+
 func direct_gain_score(gain, baseline, stats):
 	return gain / max(0.1,baseline) * max(1.0,100.0+stats.get("stat_percent_damage",0)) * 0.9
 
@@ -405,10 +429,18 @@ func marginal_weapon_score(item, weapons, stats, wave):
 	if weapons.size() < 6:
 		return weapon_value(item,weapons)
 	var ranged = float(stats.get("stat_melee_damage" if policy.brawler else "stat_ranged_damage",0))
-	var gain = -1.0
+	var direct_merge_gain = -1.0
 	for owned in weapons:
 		if owned.my_id == item.my_id and owned.upgrades_into != null:
-			gain = max(gain,base_gun_dps(owned.upgrades_into,ranged)-base_gun_dps(owned,ranged))
+			direct_merge_gain = max(direct_merge_gain,base_gun_dps(owned.upgrades_into,ranged)-base_gun_dps(owned,ranged))
+	# A directly buyable duplicate uses native auto-combine; score that action.
+	if direct_merge_gain > 0.0:
+		return direct_gain_score(direct_merge_gain,loadout_dps(weapons,ranged),stats)
+	var gain = -1.0
+	var replacement = ranger_replacement(item,weapons,stats)
+	if replacement != null:
+		gain = base_gun_dps(item,ranged)-base_gun_dps(replacement,ranged)
+	for owned in weapons:
 		var copies = 0
 		for other in weapons:
 			if other.my_id == owned.my_id:
@@ -486,7 +518,7 @@ func shop(scene):
 				record("shop_rejected", {"wave":RunData.current_wave,"id":item.my_id,"cost":n.value,"gold":gold,"score":score,"reason":"weapon_value_threshold"})
 				continue
 			if not shop_items._can_weapon_be_bought(n):
-				var can_make_slot = false
+				var can_make_slot = ranger_replacement(item,weapons,shop_stats) != null and not RunData.get_player_effect_bool(Keys.lock_current_weapons_hash,0)
 				if weapons.size() >= 6 and not RunData.has_weapon_slot_available(item,0):
 					for owned in weapons:
 						if RunData.can_combine(owned,0):
@@ -516,6 +548,19 @@ func shop(scene):
 					if gain > merge_gain:
 						merge_gain = gain
 						merge_weapon = owned
+			var replacement = ranger_replacement(best.item_data,weapons,shop_stats)
+			if replacement != null and -base_gun_dps(replacement,shop_stats.get("stat_ranged_damage",0)) >= merge_gain and not RunData.get_player_effect_bool(Keys.lock_current_weapons_hash,0):
+				var planned_id = best.item_data.my_id
+				record("replace_weapon",{"sold":replacement.my_id,"planned_buy":planned_id,"cost":best.value,"gold":gold})
+				scene._on_item_discard_button_pressed(replacement,0)
+				# Native recycling refreshes the shop controls. Reacquire the offer.
+				for offer in scene._get_shop_items_container(0)._shop_items:
+					if is_instance_valid(offer) and offer.active and offer.item_data.my_id == planned_id and offer.value <= RunData.get_player_currency(0) and scene._get_shop_items_container(0)._can_weapon_be_bought(offer):
+						record("buy",{"id":planned_id,"cost":offer.value,"reason":"committed_pistol_replacement"})
+						offer._on_BuyButton_pressed()
+						return
+				record("replacement_offer_unavailable",{"id":planned_id})
+				return
 			if merge_weapon != null:
 				pending_shop_buy = best
 				record("combine", {"id":merge_weapon.my_id,"planned_buy":best.item_data.my_id,"ranked_before_merge":true,"merge_dps_delta":merge_gain})
@@ -527,7 +572,7 @@ func shop(scene):
 		best._on_BuyButton_pressed()
 		return
 	var reroll_cost = scene._reroll_price[0]
-	var reserve = 20 + RunData.current_wave * 3 if RunData.current_wave < 8 else 100 + RunData.current_wave * 8
+	var reserve = policy.shop_reserve(RunData.current_wave)
 	if not scene._get_reroll_button(0).disabled and policy.can_reroll(gold, reroll_cost, shop_rolls, weapons.size(), RunData.current_wave, shop_opening_gold, shop_reroll_spent):
 		shop_rolls += 1
 		shop_reroll_spent += reroll_cost
@@ -547,7 +592,7 @@ func add_threat(cells, point, pos, radius, bullet = false, velocity = Vector2.ZE
 	var cell = ((point - pos) / 96.0).floor()
 	var key = Vector3(cell.x, cell.y, 1 if bullet else 0)
 	if not cells.has(key):
-		cells[key] = [point, radius, 1, velocity]
+		cells[key] = [point, radius, 1, velocity, 0.0, 0.65 if bullet else policy.body_horizon]
 	else:
 		var entry = cells[key]
 		entry[2] += 1
@@ -600,7 +645,9 @@ func danger_path(pos, velocity, threats):
 			risk += 450000.0 / max(400.0, distance_squared)
 			# Closest-distance-only assigns identical impact severity when already
 			# overlapping, even if one direction escapes and another stays inside.
-			risk += 10000.0 * contact_fraction(offset,relative_velocity,radius,active_from,active_to)
+			var fraction = contact_fraction(offset,relative_velocity,radius,active_from,active_to)
+			risk += 10000.0 * fraction
+			risk += policy.new_contact_penalty(offset,relative_velocity,radius,active_from,active_to,fraction)
 	return risk
 
 # Native slash animations sweep x=-152..163 around Hitbox local y=18.
@@ -697,7 +744,7 @@ func add_body_threat(cells, bosses, point, pos, velocity, is_boss):
 	# Preserve individual collision geometry in the immediate body-contact region.
 	if is_boss or pos.distance_squared_to(point) <= 180.0 * 180.0:
 		if pos.distance_squared_to(point) <= 420.0 * 420.0:
-			bosses.append([point,72.0,1,velocity])
+			bosses.append([point,72.0,1,velocity,0.0,0.65 if is_boss else policy.body_horizon])
 	else:
 		add_threat(cells,point,pos,72.0,false,velocity)
 
@@ -718,7 +765,10 @@ func enemy_priority(enemy):
 	var shooting = enemy._current_attack_behavior is ShootingAttackBehavior
 	return policy.target_priority(enemy is Boss, enemy is Healer or enemy is Buffer, spawning, shooting)
 
-func priority_target(targets, origin, min_range, max_range):
+func is_emergency_target(enemy, player_position, player_velocity):
+	return is_instance_valid(enemy) and enemy is Enemy and not enemy is Boss and not enemy.dead and enemy.get_charmed_by_player_index() < 0 and policy.imminent_contact(enemy.global_position-player_position,enemy._integrate_forces_velocity-player_velocity)
+
+func priority_target(targets, origin, min_range, max_range, player_position = null, player_velocity = Vector2.ZERO):
 	var best = [null,INF]
 	var best_priority = -1
 	var best_cost = INF
@@ -729,6 +779,8 @@ func priority_target(targets, origin, min_range, max_range):
 		var distance = origin.distance_to(enemy.global_position)
 		if distance <= min_range or distance > max_range:
 			continue
+		if player_position != null and is_emergency_target(enemy,player_position,player_velocity):
+			priority = 6 # Only weapon aim: clear imminent body contact, then resume boss.
 		var cost = distance
 		if enemy is Boss:
 			var warning = charge_warning(enemy)
@@ -759,13 +811,13 @@ func charge_warning(enemy):
 		axis = enemy.current_target.global_position-enemy.global_position if enemy.current_target != null else Vector2.ZERO
 	return {"id":enemy.enemy_id,"delay":delay,"direction":axis,"speed":behavior.charge_speed*RunData.current_run_accessibility_settings.speed,"duration":behavior._unlock_move_timer.time_left if charging else behavior.charge_duration,"phase":"charge" if charging else ("windup" if preparing else "cooldown")}
 
-func observe_weapon_target(target, weapon_id):
+func observe_weapon_target(target, weapon_id, emergency = false):
 	if target[0] == null or clock < next_aim_report:
 		return
 	next_aim_report = clock + 1.0
 	var enemy = target[0]
 	var id = enemy.filename if enemy is Neutral else enemy.enemy_id
-	record("weapon_target", {"id":id,"priority":enemy_priority(enemy),"distance":target[1],"weapon":weapon_id})
+	record("weapon_target", {"id":id,"priority":6 if emergency else enemy_priority(enemy),"emergency_contact":emergency,"distance":target[1],"weapon":weapon_id})
 
 func steer(player):
 	if is_instance_valid(player) and not player.is_connected("took_damage",self,"on_native_player_hit"):
@@ -816,13 +868,15 @@ func steer(player):
 	forecast_player_position = pos
 	for enemy in threat_units(spawner):
 		if is_instance_valid(enemy) and not enemy.dead:
-			if enemy is Boss:
-				var warning = charge_warning(enemy)
-				if not warning.empty():
-					var segment = boss_model.charge_segment(enemy.global_position,warning.direction,warning.speed,warning.delay,warning.duration)
-					if not segment.empty():
-						boss_threats.append(segment)
+			# Ordinary chargers share the native behavior with charging bosses.
+			var warning = charge_warning(enemy)
+			if not warning.empty():
+				var segment = boss_model.charge_segment(enemy.global_position,warning.direction,warning.speed,warning.delay,warning.duration)
+				if not segment.empty():
+					boss_threats.append(segment)
+				if enemy is Boss or pos.distance_squared_to(enemy.global_position) <= 600.0*600.0:
 					boss_warnings.append({"id":warning.id,"phase":warning.phase,"delay":warning.delay,"direction":[warning.direction.x,warning.direction.y]})
+			if enemy is Boss:
 				for attached in enemy._all_additional_projectiles:
 					if not is_instance_valid(attached) or not attached is EnemyProjectileRotating or not attached.is_visible_in_tree() or attached._enable_stop_delay:
 						continue
@@ -883,7 +937,7 @@ func steer(player):
 	var initial_distance = pos.distance_to(target)
 	var candidate_details = []
 	for v in directions:
-		if not boundary_allows(pos,pos + v * speed * 0.65,bounds):
+		if not boundary_allows(pos,pos + v * speed * policy.body_horizon,bounds):
 			continue
 		var score = v.dot(previous_direction) * 6.0
 		# Reward actual progress toward a material cluster, in world-space units.
@@ -927,8 +981,11 @@ func report(scene):
 			state["hp"] = p.current_stats.health
 			state["max_hp"] = p.max_stats.health
 			state["position"] = [p.global_position.x,p.global_position.y]
-	state["strategy_version"] = "0.6.3-dev" if policy.brawler else "0.5.25"
+	state["strategy_version"] = "0.6.8-dev"
 	state["profile"] = gun_profile
+	state["character"] = selected_character
+	state["run_id"] = recording_id
+	state["recording_enabled"] = recording_enabled
 	state["trees_killed_total"] = ProgressData.data.get("trees_killed",0)
 	state["development_speed"] = development_speed
 	state["time_scale"] = Engine.time_scale
@@ -982,6 +1039,13 @@ func begin_recording():
 	recording_id = "run-%04d%02d%02d-%02d%02d%02d-%s" % [dt.year,dt.month,dt.day,dt.hour,dt.minute,dt.second,OS.get_ticks_msec()]
 	recording_ended = false
 	recording_end_at = -1.0
+	healing_totals = {}
+	focused_boss_id = 0
+	boss_warnings = []
+	if not recording_enabled:
+		recording_ended = true
+		record("run_start",{"run_id":recording_id,"character":selected_character,"recording":false})
+		return
 	var pid = OS.execute("C:/Users/75315/miniconda3/python.exe", PoolStringArray(["F:/codex-project/tudou/record_run.py",recording_id,str(OS.get_process_id())]), false)
 	record("recording_start", {"run_id":recording_id,"worker_pid":pid})
 
@@ -996,9 +1060,14 @@ func end_recording():
 	record("recording_stop", {"run_id":recording_id})
 
 func update_recording(scene):
+	# A finished run must never be rearmed just by visiting character selection.
+	if finished:
+		if recording_end_at >= 0 and clock >= recording_end_at:
+			end_recording()
+		return
 	var changed = scene.filename != last_scene
 	var new_selection = changed and scene is CharacterSelection
-	var new_game = scene.filename == "res://main.tscn" and (recording_id == "" or (changed and recording_ended))
+	var new_game = scene.filename == "res://main.tscn" and recording_id == ""
 	if new_selection or new_game:
 		finished = false
 		settlement_at = -1.0
@@ -1006,6 +1075,9 @@ func update_recording(scene):
 		recent_combat = []
 		begin_recording()
 	previous_wave = RunData.current_wave
+	if not recording_enabled:
+		recording_label.text = "REC OFF"
+		return
 	if recording_id == "":
 		recording_label.text = "REC waiting for next run"
 		return
@@ -1036,13 +1108,14 @@ func _exit_tree():
 
 func analyze_run():
 	var analysis = policy.analyze(recent_combat, RunData.current_wave)
-	analysis["strategy_version"] = "0.6.3-dev" if policy.brawler else "0.5.25"
+	analysis["strategy_version"] = "0.6.8-dev"
 	analysis["run_id"] = recording_id
 	analysis["gun_profile"] = gun_profile
+	analysis["character"] = selected_character
 	analysis["development_speed"] = development_speed
 	analysis["healing_totals"] = healing_totals.duplicate(true)
 	analysis["won"] = RunData.run_won
-	analysis["recording"] = "F:/codex-project/tudou/recordings/" + recording_id + ".mp4"
+	analysis["recording"] = "F:/codex-project/tudou/recordings/" + recording_id + ".mp4" if recording_enabled else ""
 	var results_dir = Directory.new()
 	results_dir.make_dir_recursive(evidence + "/results")
 	var result_file = File.new()
@@ -1063,6 +1136,8 @@ func load_base_item(folder, resource_name):
 
 func verify_recovery():
 	var selected_brawler = policy.brawler
+	var saved_character_policy = policy.character
+	policy.character = "character_well_rounded"
 	var selected_profile = gun_profile
 	policy.brawler = false
 	var passed = policy.should_restart(false,true,true,8.0) and not policy.should_restart(true,true,true,10.0) and not policy.should_restart(false,true,false,10.0) and not policy.should_restart(false,false,true,10.0) and not policy.should_restart(false,true,true,7.9)
@@ -1154,6 +1229,13 @@ func verify_recovery():
 	passed = passed and weapon_value(actual_smg,[actual_smg,actual_smg,actual_smg,actual_smg,actual_smg]) > 0
 	passed = passed and weapon_value(shotgun,[actual_smg,actual_smg,actual_smg,actual_smg,actual_smg,actual_smg]) > 0
 	var smg3 = load("res://weapons/ranged/smg/3/smg_3_data.tres")
+	var pistol = load("res://weapons/ranged/pistol/1/pistol_data.tres")
+	policy.character = "character_ranger"
+	passed = passed and ranger_replacement(smg3,[pistol,actual_smg,actual_smg,actual_smg,shotgun,shotgun],{"stat_ranged_damage":9}) == pistol
+	passed = passed and ranger_replacement(actual_smg,[pistol,actual_smg],{"stat_ranged_damage":9}) == null
+	passed = passed and ranger_replacement(smg3,[actual_smg,actual_smg,actual_smg,actual_smg,shotgun,shotgun],{"stat_ranged_damage":9}) == null
+	policy.character = "character_well_rounded"
+	passed = passed and ranger_replacement(smg3,[pistol,actual_smg,actual_smg,actual_smg,shotgun,shotgun],{"stat_ranged_damage":9}) == null
 	var weak_body = {"stat_ranged_damage":6,"stat_armor":1}
 	var advanced_guns = [smg3,actual_smg,actual_smg,actual_smg,shotgun,shotgun]
 	var upgrade_points = marginal_weapon_score(smg3,advanced_guns,weak_body,11)
@@ -1184,6 +1266,10 @@ func verify_recovery():
 	native_spawner.bosses = [boss_marker]
 	native_spawner.charmed_enemies = [charmed_marker]
 	var test_body_cells = {}
+	var crowded_corner = Vector2(263.717957,1231.81189)
+	var crowded_bounds = Rect2(45,45,1958,1446)
+	passed = passed and boundary_allows(crowded_corner,crowded_corner+Vector2.DOWN*558*policy.body_horizon,crowded_bounds)
+	passed = passed and not boundary_allows(crowded_corner,crowded_corner+Vector2.DOWN*558*0.65,crowded_bounds)
 	var test_boss_bodies = []
 	add_body_threat(test_body_cells,test_boss_bodies,Vector2(240,240),Vector2.ZERO,Vector2(-500,0),true)
 	add_body_threat(test_body_cells,test_boss_bodies,Vector2(200,200),Vector2.ZERO,Vector2.ZERO,false)
@@ -1206,6 +1292,7 @@ func verify_recovery():
 	checks.store_string(JSON.print({"version":"0.5.25","passed":passed,"checks":["native early six SMG ranged2 vs HP9 and affordable tier1 upgrade DPS normalization","recovery gates","real defeat evidence","speed/attack/range floors","support upgrade at full slots","no extra support at open slots","incoming projectile collision","real wave16 shop budget regression","reroll purchase reserve / budget / iteration limits","early economy preserved","native shotgun/SMG slot caps and merge","sharp bullet synergy","avoid bounce damage loss for piercing trial","native slash resources","full warning sweep footprint / safe lane","rotated and offset slash transform","real sharp bullet plus triple bandana regression","duplicate synergy diminishing returns","warning escape before native active interval","already active slash stays dangerous","wall infeasible moves rejected","real lethal corner24/36 escape allowed","native barricade stationary armor excluded while moving","unconditional speed penalty retained","real four SMG empty-slot deadlock regression","temporary sixth SMG and later shotgun accepted","native full-loadout marginal upgrade valuation","early slot filling retains priority","real armor offer accepted / weaker marginal weapon rejected","unified item and weapon admission threshold","inside-threat fast escape vs deeper crossing duration","stationary and delayed activation contact fractions","real higher-tier offer admitted after lower-tier merge","shotgun pair-to-higher-tier purchase admitted","native bait extra7-8 enemies risk detected","native weird ghost forced-low-health risk detected","same-cell nearfield normal bodies retained independently","same-cell boss body and velocity retained independently","native separate boss list included","native charmed-enemy exclusion retained"]}))
 	checks.close()
 	policy.brawler = selected_brawler
+	policy.character = saved_character_policy
 	gun_profile = selected_profile
 	record("recovery_selfcheck", {"passed":passed})
 	if not passed:

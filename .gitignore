@@ -7,7 +7,11 @@
 !/deploy.py
 !/launch_background.py
 !/record_run.py
+!/campaign.py
 !/Start-Pilot.ps1
+!/docs/
+/docs/*
+!/docs/ranger-danger5.md
 !/mods-unpacked/
 /mods-unpacked/*
 !/mods-unpacked/Codex-Pilot/
