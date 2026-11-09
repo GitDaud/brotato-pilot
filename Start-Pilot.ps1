@@ -1,3 +1,4 @@
+param([ValidateSet("ranged", "brawler")][string]$Profile = "ranged")
 $ErrorActionPreference = 'Stop'
 if (Get-Process Brotato -ErrorAction SilentlyContinue) {
     throw 'Brotato is already running. Close it before starting Pilot.'
@@ -18,7 +19,7 @@ try {
     try {
         $env:SteamAppId = '1942280'
         $env:SteamGameId = '1942280'
-        python launch_background.py
+        python launch_background.py --profile $Profile
         if ($LASTEXITCODE -ne 0) { throw 'Background launch failed.' }
     } finally {
         $env:SteamAppId = $oldAppId
