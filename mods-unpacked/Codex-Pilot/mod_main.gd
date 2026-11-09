@@ -26,6 +26,9 @@ var last_scene = ""
 var scene_age = 0.0
 var pending_shop_buy = null
 var shop_rolls = 0
+var upgrade_roll_wave = -1
+var upgrade_rolls = 0
+var upgrade_roll_spent = 0
 var shop_opening_gold = -1
 var shop_reroll_spent = 0
 var label
@@ -127,7 +130,7 @@ func _ready():
 	button.text = "Codex Pilot ON / OFF"
 	button.connect("pressed", self, "toggle")
 	box.add_child(button)
-	record("loaded", {"version":"0.6.10-dev","profile":gun_profile,"development_speed":development_speed})
+	record("loaded", {"version":"0.6.11-dev","profile":gun_profile,"development_speed":development_speed})
 	verify_recovery()
 
 func toggle():
@@ -456,14 +459,28 @@ func choose_upgrade(scene):
 	var candidates = []
 	var best = null
 	var score = -100000.0
+	var upgrade_stats = stat_snapshot()
+	if upgrade_roll_wave != RunData.current_wave:
+		upgrade_roll_wave = RunData.current_wave
+		upgrade_rolls = 0
+		upgrade_roll_spent = 0
 	for n in nodes(scene):
 		if n is UpgradeUI and n.is_visible_in_tree() and not n.button.disabled:
-			var s = value_item(n.upgrade_data)
+			var s = policy.upgrade_score(n.upgrade_data.effects,upgrade_stats,RunData.current_wave,value_item(n.upgrade_data))
 			candidates.append({"id":n.upgrade_data.my_id,"score":s})
 			if s > score:
 				score = s
 				best = n
 	if best != null:
+		if scene.has_method("_get_player_container"):
+			var container = scene._get_player_container(0)
+			if is_instance_valid(container) and not container._button_pressed and container._reroll_button.is_visible_in_tree() and not container._reroll_button.disabled and policy.reroll_upgrade(best.upgrade_data.effects,upgrade_stats,RunData.current_wave,score,RunData.get_player_currency(0),container._reroll_price,upgrade_rolls,upgrade_roll_spent):
+				upgrade_rolls += 1
+				upgrade_roll_spent += container._reroll_price
+				record("upgrade_reroll",{"wave":RunData.current_wave,"offers":candidates,"rejected_best":best.upgrade_data.my_id,"best_score":score,"cost":container._reroll_price,"rolls":upgrade_rolls})
+				decision = "Reroll weak upgrades"
+				container._on_RerollButton_pressed()
+				return
 		record("upgrade_candidates", {"wave":RunData.current_wave,"stats":stat_snapshot(),"offers":candidates,"selected":best.upgrade_data.my_id})
 		decision = "Upgrade " + best.upgrade_data.my_id
 		record("upgrade", {"id":best.upgrade_data.my_id,"score":score})
@@ -982,7 +999,7 @@ func report(scene):
 			state["hp"] = p.current_stats.health
 			state["max_hp"] = p.max_stats.health
 			state["position"] = [p.global_position.x,p.global_position.y]
-	state["strategy_version"] = "0.6.10-dev"
+	state["strategy_version"] = "0.6.11-dev"
 	state["profile"] = gun_profile
 	state["character"] = selected_character
 	state["run_id"] = recording_id
@@ -1109,7 +1126,7 @@ func _exit_tree():
 
 func analyze_run():
 	var analysis = policy.analyze(recent_combat, RunData.current_wave)
-	analysis["strategy_version"] = "0.6.10-dev"
+	analysis["strategy_version"] = "0.6.11-dev"
 	analysis["run_id"] = recording_id
 	analysis["gun_profile"] = gun_profile
 	analysis["character"] = selected_character

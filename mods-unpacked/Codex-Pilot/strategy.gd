@@ -222,6 +222,36 @@ func weapon_purchase_worthwhile(score, cost, wave):
 		return score >= max(4.0,(cost+15)*0.025)
 	return purchase_worthwhile(score,cost)
 
+func upgrade_score(effects, stats, wave, score):
+	if character != "character_mutant" or stats.get("stat_ranged_damage",0) >= max(8,wave):
+		return score
+	for effect in effects:
+		if effect.value > 0 and effect.key == "stat_ranged_damage":
+			return score*1.75
+		if effect.value > 0 and effect.key == "stat_harvesting":
+			return score*0.35
+	return score
+
+func reroll_upgrade(effects, stats, wave, score, gold, cost, rolls, spent):
+	if character != "character_mutant" or rolls >= 2 or cost < 0:
+		return false
+	if gold-cost < (30+wave*2 if wave < 8 else 80) or cost > max(5.0,gold*0.08) or spent+cost > max(8.0,gold*0.12):
+		return false
+	for effect in effects:
+		if effect.value <= 0:
+			continue
+		if effect.key == "stat_ranged_damage":
+			return false
+		if effect.key == "stat_max_hp" and stats.get("stat_max_hp",0) < 20:
+			return false
+		if effect.key == "stat_armor" and stats.get("stat_armor",0) < max(2.0,wave*0.6):
+			return false
+		if effect.key == "stat_speed" and stats.get("stat_speed",0) < 15:
+			return false
+		if effect.key == "stat_lifesteal" and wave >= 8 and stats.get("stat_lifesteal",0) < 5:
+			return false
+	return score < 10.0 or (score < 20.0 and stats.get("stat_ranged_damage",0) < max(8,wave))
+
 # Unmodeled forced low-health wave starts must not be priced as pure max-HP gains.
 func forced_low_health_start(effects):
 	for effect in effects:
