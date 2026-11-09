@@ -76,6 +76,12 @@ func _init():
 	check(policy.can_reroll(188,29,2,6,19,854,49), "real final shop can search with otherwise unused money")
 	check(not policy.can_reroll(188,29,2,6,18,854,49), "earlier shop keeps next-wave reserve")
 	check(not policy.can_reroll(188,29,2,6,19,854,290), "final shop still respects reroll budget")
+	policy.brawler = false
+	check(policy.score_effects([{"key":"stat_lifesteal","value":-3,"custom_key":""}],{"stat_lifesteal":0},11) < 0.0, "negative lifesteal debt costs value")
+	check(policy.score_effects([{"key":"stat_lifesteal","value":2,"custom_key":""}],{"stat_lifesteal":-3},11) > 0.0, "partial lifesteal repair has value")
+	check(policy.imminent_contact(Vector2(200,0),Vector2(-600,0)), "incoming pursuer triggers emergency aim")
+	check(not policy.imminent_contact(Vector2(200,0),Vector2(600,0)), "retreating enemy does not interrupt boss focus")
+	check(not policy.imminent_contact(Vector2(200,0),Vector2(0,600)), "passing enemy outside contact band does not interrupt")
 	policy.character = "character_chunky"
 	check(policy.score_effects([{"key":"stat_speed","value":3,"custom_key":""}],{"stat_speed":0,"stat_gains":{"stat_speed":0}},3) == 0.0, "chunky cannot buy speed gains")
 	check(policy.score_effects([{"key":"stat_lifesteal","value":5,"custom_key":""}],{"stat_lifesteal":-100},3) == 0.0, "chunky unusable lifesteal not valued")

@@ -89,7 +89,7 @@ func score_effects(effects, stats, wave):
 		var effective_value = float(e.value)*stats.get("stat_gains",{}).get(e.key,1.0)
 		if e.key == "stat_lifesteal":
 			var current = float(stats.get("stat_lifesteal",0))
-			effective_value = clamp(current+effective_value,0.0,100.0)-clamp(current,0.0,100.0)
+			effective_value = min(current+effective_value,100.0)-min(current,100.0)
 		if e.key == "stat_dodge":
 			# Negative dodge has no native chance, but creates a future repair cost.
 			weight = 2.0 if brawler else 0.9
@@ -102,6 +102,14 @@ func score_effects(effects, stats, wave):
 func movement_target_allowed(is_tree, distance):
 	# Nearby trees remain high priority; distant trees must not suppress XP pickup.
 	return not is_tree or distance <= 420.0
+
+func imminent_contact(offset, relative_velocity):
+	if offset.length_squared() <= 80.0*80.0:
+		return true
+	if relative_velocity.length_squared() < 0.01 or offset.dot(relative_velocity) >= 0:
+		return false
+	var time = clamp(-offset.dot(relative_velocity)/relative_velocity.length_squared(),0.0,0.30)
+	return (offset+relative_velocity*time).length_squared() <= 80.0*80.0
 
 # Conservative pilot estimates, not native guaranteed returns. Price is charged
 # before admitting an investment; late shops therefore lose economic priority.
