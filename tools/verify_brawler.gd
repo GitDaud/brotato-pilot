@@ -88,6 +88,14 @@ func _init():
 	check(policy.new_contact_penalty(Vector2(100,0),Vector2(-600,0),72,0,0.65,0.2) >= 6000, "brief new body crossing still costs a hit")
 	check(policy.new_contact_penalty(Vector2(30,0),Vector2(600,0),72,0,0.65,0.1) == 0, "existing overlap retains fast escape model")
 	check(policy.new_contact_penalty(Vector2.ZERO,Vector2(0,300),42,0.48,0.6,0) == 0, "escape before activation avoids new hit cost")
+	policy.character = "character_mutant"
+	check(policy.weapon_purchase_worthwhile(8.880333,314,17), "real affordable mutant tier3 shotgun upgrade admitted")
+	check(policy.weapon_purchase_worthwhile(4.383375,132,10), "real mutant tier2 shotgun upgrade admitted")
+	check(not policy.weapon_purchase_worthwhile(-1,107,18), "mutant still rejects modeled damage losses")
+	check(not policy.weapon_purchase_worthwhile(3.9,40,17), "mutant still requires minimum useful gain")
+	check(not policy.weapon_purchase_worthwhile(8.880333,314,9), "mutant retains early investment threshold")
+	policy.character = "character_ranger"
+	check(not policy.weapon_purchase_worthwhile(8.880333,314,17), "role-specific threshold does not change ranger")
 	policy.character = "character_chunky"
 	check(policy.score_effects([{"key":"stat_speed","value":3,"custom_key":""}],{"stat_speed":0,"stat_gains":{"stat_speed":0}},3) == 0.0, "chunky cannot buy speed gains")
 	check(policy.score_effects([{"key":"stat_lifesteal","value":5,"custom_key":""}],{"stat_lifesteal":-100},3) == 0.0, "chunky unusable lifesteal not valued")

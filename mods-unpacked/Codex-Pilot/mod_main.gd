@@ -127,7 +127,7 @@ func _ready():
 	button.text = "Codex Pilot ON / OFF"
 	button.connect("pressed", self, "toggle")
 	box.add_child(button)
-	record("loaded", {"version":"0.6.9-dev","profile":gun_profile,"development_speed":development_speed})
+	record("loaded", {"version":"0.6.10-dev","profile":gun_profile,"development_speed":development_speed})
 	verify_recovery()
 
 func toggle():
@@ -515,7 +515,7 @@ func shop(scene):
 				record("shop_rejected", {"wave":RunData.current_wave,"id":item.my_id,"cost":n.value,"gold":gold,"score":score,"reason":"profile"})
 				continue
 			score = marginal_weapon_score(item,weapons,shop_stats,RunData.current_wave)
-			if not policy.purchase_worthwhile(score,n.value):
+			if not policy.weapon_purchase_worthwhile(score,n.value,RunData.current_wave):
 				record("shop_rejected", {"wave":RunData.current_wave,"id":item.my_id,"cost":n.value,"gold":gold,"score":score,"reason":"weapon_value_threshold"})
 				continue
 			if not shop_items._can_weapon_be_bought(n):
@@ -982,7 +982,7 @@ func report(scene):
 			state["hp"] = p.current_stats.health
 			state["max_hp"] = p.max_stats.health
 			state["position"] = [p.global_position.x,p.global_position.y]
-	state["strategy_version"] = "0.6.9-dev"
+	state["strategy_version"] = "0.6.10-dev"
 	state["profile"] = gun_profile
 	state["character"] = selected_character
 	state["run_id"] = recording_id
@@ -1109,7 +1109,7 @@ func _exit_tree():
 
 func analyze_run():
 	var analysis = policy.analyze(recent_combat, RunData.current_wave)
-	analysis["strategy_version"] = "0.6.9-dev"
+	analysis["strategy_version"] = "0.6.10-dev"
 	analysis["run_id"] = recording_id
 	analysis["gun_profile"] = gun_profile
 	analysis["character"] = selected_character

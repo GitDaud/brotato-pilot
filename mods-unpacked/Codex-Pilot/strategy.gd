@@ -215,6 +215,13 @@ func can_reroll(gold, cost, rolls, weapon_count, wave, opening_gold, spent):
 func purchase_worthwhile(score, cost):
 	return score >= max(4.0, (cost + 15) * 0.04)
 
+func weapon_purchase_worthwhile(score, cost, wave):
+	# Mutant's native +50% prices otherwise strand positive gun upgrades while
+	# available funds remain unused. Keep the early rule and minimum gain floor.
+	if character == "character_mutant" and wave >= 10:
+		return score >= max(4.0,(cost+15)*0.025)
+	return purchase_worthwhile(score,cost)
+
 # Unmodeled forced low-health wave starts must not be priced as pure max-HP gains.
 func forced_low_health_start(effects):
 	for effect in effects:
