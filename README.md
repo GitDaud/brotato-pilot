@@ -6,7 +6,7 @@
 
 ### 角色开发分支
 
-每个角色从最新 `master` 建独立 `feature/<角色英文ID>-strategy` 分支。该角色危险 5 原生胜利且存档确认后，才合并回 `master`，再为下个角色建分支。失败留在本角色继续优化，不跳过。当前游侠在 `feature/ranger-strategy`；已通关的斗士版本已合入 `master`，旧混合开发分支保留作历史记录。
+每个角色从最新 `master` 建独立 `feature/<角色英文ID>-strategy` 分支。该角色危险 5 原生胜利且存档确认后，才合并回 `master`，再为下个角色建分支。失败留在本角色继续优化，不跳过。斗士、游侠的已验证版本均已合入 `master`；当前异变体在 `feature/mutant-strategy`，见 [异变体危险 5](docs/mutant-danger5.md)。旧混合开发分支保留作历史记录。
 
 #### 0.6.4 危险 6 解锁流程
 

@@ -127,7 +127,7 @@ func _ready():
 	button.text = "Codex Pilot ON / OFF"
 	button.connect("pressed", self, "toggle")
 	box.add_child(button)
-	record("loaded", {"version":"0.6.8-dev","profile":gun_profile,"development_speed":development_speed})
+	record("loaded", {"version":"0.6.9-dev","profile":gun_profile,"development_speed":development_speed})
 	verify_recovery()
 
 func toggle():
@@ -251,6 +251,7 @@ func stat_snapshot():
 	for key in ["stat_max_hp","stat_armor","stat_melee_damage","stat_ranged_damage","stat_percent_damage","stat_attack_speed","stat_lifesteal","stat_hp_regeneration","stat_speed","stat_dodge","stat_crit_chance","stat_range","stat_harvesting","stat_luck"]:
 		stats[key] = Utils.get_capped_stat(Keys.generate_hash(key), 0) if key == "stat_max_hp" else Utils.get_stat(Keys.generate_hash(key), 0)
 	stats["trees"] = RunData.get_player_effect(Keys.generate_hash("trees"),0)
+	stats["items_price"] = RunData.get_player_effect(Keys.items_price_hash,0)
 	stats["harvesting_growth"] = RunData.get_player_effect(Keys.generate_hash("harvesting_growth"),0)
 	stats["stat_gains"] = {}
 	for key in stats.keys():
@@ -294,7 +295,7 @@ func value_item(item, price = 0):
 	for owned in RunData.get_player_items(0):
 		owned_ids.append(owned.my_id)
 	score += synergy_bonus(item.my_id, owned_ids)
-	score += policy.special_item_score(item.my_id,RunData.current_wave,price,owned_ids.count(item.my_id),max(150.0,shop_opening_gold*0.7))
+	score += policy.special_item_score(item.my_id,RunData.current_wave,price,owned_ids.count(item.my_id),max(150.0,shop_opening_gold*0.7),max(0.1,1.0+stats.items_price/100.0))
 	# Autonomous survival cannot currently model ongoing self-damage safely.
 	if item.my_id in ["item_blood_donation", "item_bloody_hand"]:
 		score -= 1000.0
@@ -981,7 +982,7 @@ func report(scene):
 			state["hp"] = p.current_stats.health
 			state["max_hp"] = p.max_stats.health
 			state["position"] = [p.global_position.x,p.global_position.y]
-	state["strategy_version"] = "0.6.8-dev"
+	state["strategy_version"] = "0.6.9-dev"
 	state["profile"] = gun_profile
 	state["character"] = selected_character
 	state["run_id"] = recording_id
@@ -1108,7 +1109,7 @@ func _exit_tree():
 
 func analyze_run():
 	var analysis = policy.analyze(recent_combat, RunData.current_wave)
-	analysis["strategy_version"] = "0.6.8-dev"
+	analysis["strategy_version"] = "0.6.9-dev"
 	analysis["run_id"] = recording_id
 	analysis["gun_profile"] = gun_profile
 	analysis["character"] = selected_character

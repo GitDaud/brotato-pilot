@@ -80,7 +80,8 @@ func score_effects(effects, stats, wave):
 		if not w.has(e.key):
 			continue
 		if e.key == "stat_harvesting":
-			score += harvesting_return(scored_harvesting,e.value,wave,stats.get("harvesting_growth",5.0))*0.15
+			# Future currency buys fewer stats when native shop prices are higher.
+			score += harvesting_return(scored_harvesting,e.value,wave,stats.get("harvesting_growth",5.0))*0.15/max(0.1,1.0+stats.get("items_price",0)/100.0)
 			scored_harvesting += e.value
 			continue
 		var weight = w[e.key]
@@ -129,10 +130,11 @@ func new_contact_penalty(offset, velocity, radius, active_from, active_to, fract
 
 # Conservative pilot estimates, not native guaranteed returns. Price is charged
 # before admitting an investment; late shops therefore lose economic priority.
-func special_item_score(id, wave, price, copies, future_shop_budget = 150.0):
+func special_item_score(id, wave, price, copies, future_shop_budget = 150.0, price_factor = 1.0):
 	var remaining = max(0,20-wave)
 	if id == "item_coupon":
-		return max(0.0,(remaining*future_shop_budget*0.05-price)*0.3)
+		# Coupon removes five additive price points, not 5% of the paid total.
+		return max(0.0,(remaining*future_shop_budget*0.05/max(0.1,price_factor)-price)*0.3)
 	if id == "item_tree":
 		return max(0.0,(remaining*3.0-price)*0.3)
 	if id == "item_recycling_machine":

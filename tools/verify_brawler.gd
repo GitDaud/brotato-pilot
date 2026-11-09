@@ -48,6 +48,9 @@ func _init():
 	check(policy.target_priority(false,false,false,false,true) > policy.target_priority(false,true,true,true), "tree above other enemies")
 	check(policy.special_item_score("item_coupon",2,20,0) > 4.0, "early coupon pays back")
 	check(policy.special_item_score("item_coupon",19,60,0) == 0.0, "late coupon rejected")
+	check(policy.special_item_score("item_coupon",2,20,0,150,1.5) < policy.special_item_score("item_coupon",2,20,0,150,1.0), "mutant coupon uses native additive price factor")
+	var harvest_effect = {"key":"stat_harvesting","value":8,"custom_key":""}
+	check(policy.score_effects([harvest_effect],{"items_price":50},3) < policy.score_effects([harvest_effect],{"items_price":0},3), "higher native prices reduce future currency purchasing power")
 	check(policy.special_item_score("item_tree",2,20,0) > 4.0, "early tree investment")
 	check(policy.special_item_score("item_tree",19,62,0) == 0.0, "late tree rejected")
 	check(policy.special_item_score("item_cute_monkey",5,42,0) > 4.0, "monkey recovery no longer zero")
