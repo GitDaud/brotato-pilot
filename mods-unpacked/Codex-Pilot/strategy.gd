@@ -38,8 +38,10 @@ func weights(stats, wave):
 	# Luck improves native loot and tier rolls; recovering negative luck matters.
 	result["stat_luck"] = (0.7 if wave < 12 else 0.3) * (1.5 if stats.get("stat_luck",0) < 0 else 1.0) * (1.0+min(0.5,stats.get("trees",0)*0.1))
 	if character == "character_lucky":
-		result["stat_luck"] = 2.0 if stats.get("stat_luck",0) < 250 else 0.8
-		result["stat_attack_speed"] = 2.8 if stats.get("stat_attack_speed",0) < 0 else 1.2
+		result["stat_luck"] = 1.2 if stats.get("stat_luck",0) < 200 else 0.6
+		result["stat_attack_speed"] = 6.0 if stats.get("stat_attack_speed",0) < 0 else 1.2
+		result["stat_armor"] *= 1.5
+		result["stat_percent_damage"] = 1.2
 		result["consumable_heal"] = 2.0
 	if character == "character_old":
 		result["stat_percent_damage"] = 1.8 if stats.get("stat_percent_damage",0) < 30 else 0.9
@@ -107,6 +109,8 @@ func score_effects(effects, stats, wave):
 		if e.key == "stat_harvesting":
 			# Future currency buys fewer stats when native shop prices are higher.
 			var economy_weight = 0.15
+			if character == "character_lucky" and (wave >= 6 or scored_harvesting >= 30):
+				economy_weight *= 0.3
 			if character == "character_old" and (wave >= 8 or scored_harvesting >= 40 or (wave >= 4 and stats.get("stat_percent_damage",0) < 20)):
 				economy_weight *= 0.25
 			score += harvesting_return(scored_harvesting,e.value,wave,stats.get("harvesting_growth",5.0))*economy_weight/max(0.1,1.0+stats.get("items_price",0)/100.0)
@@ -267,10 +271,12 @@ func upgrade_score(effects, stats, wave, score):
 	return score
 
 func reroll_upgrade(effects, stats, wave, score, gold, cost, rolls, spent):
-	if not character in ["character_mutant", "character_old"] or rolls >= 2 or cost < 0:
+	if not character in ["character_mutant", "character_old", "character_lucky"] or rolls >= 2 or cost < 0:
 		return false
 	if gold-cost < (30+wave*2 if wave < 8 else 80) or cost > max(5.0,gold*0.08) or spent+cost > max(8.0,gold*0.12):
 		return false
+	if character == "character_lucky":
+		return score < 10.0
 	if character == "character_old":
 		# Keep useful offers; reroll only weak choices within the shared budget.
 		return score < 12.0

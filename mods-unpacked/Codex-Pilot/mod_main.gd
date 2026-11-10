@@ -141,7 +141,7 @@ func _ready():
 	button.text = "Codex Pilot ON / OFF"
 	button.connect("pressed", self, "toggle")
 	box.add_child(button)
-	record("loaded", {"version":"0.6.19-dev","profile":gun_profile,"development_speed":development_speed})
+	record("loaded", {"version":"0.6.20-dev","profile":gun_profile,"development_speed":development_speed})
 	verify_recovery()
 
 func toggle():
@@ -1033,7 +1033,7 @@ func report(scene):
 			state["hp"] = p.current_stats.health
 			state["max_hp"] = p.max_stats.health
 			state["position"] = [p.global_position.x,p.global_position.y]
-	state["strategy_version"] = "0.6.19-dev"
+	state["strategy_version"] = "0.6.20-dev"
 	state["profile"] = gun_profile
 	state["character"] = selected_character
 	state["run_id"] = recording_id
@@ -1160,7 +1160,7 @@ func _exit_tree():
 
 func analyze_run():
 	var analysis = policy.analyze(recent_combat, RunData.current_wave)
-	analysis["strategy_version"] = "0.6.19-dev"
+	analysis["strategy_version"] = "0.6.20-dev"
 	analysis["run_id"] = recording_id
 	analysis["gun_profile"] = gun_profile
 	analysis["character"] = selected_character
