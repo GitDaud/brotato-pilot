@@ -104,7 +104,7 @@ def main():
                          expected_branch=expected_branch, actual_branch=branch)
             return
         profile = 'brawler' if short_name == 'crazy' else 'ranged'
-        weapon = {'lucky':'weapon_slingshot', 'old':'weapon_double_barrel_shotgun', 'chunky':'weapon_double_barrel_shotgun', 'mage':'weapon_taser', 'crazy':'weapon_knife'}.get(short_name, 'weapon_smg')
+        weapon = {'generalist':'weapon_double_barrel_shotgun', 'lucky':'weapon_slingshot', 'old':'weapon_double_barrel_shotgun', 'chunky':'weapon_double_barrel_shotgun', 'mage':'weapon_taser', 'crazy':'weapon_knife'}.get(short_name, 'weapon_smg')
         (RUN / 'challenge.json').write_text(json.dumps(dict(
             enabled=True, difficulty=5, profile=profile, character=character,
             weapon=weapon)), encoding='utf-8')
