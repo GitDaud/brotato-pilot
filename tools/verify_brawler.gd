@@ -125,6 +125,8 @@ func _init():
 	check(policy.score_effects([{"key":"stat_max_hp","value":4,"custom_key":""}],{"stat_max_hp":50,"stat_gains":{"stat_max_hp":1.25}},3) > 0.0, "chunky native HP multiplier valued")
 	check(policy.score_effects([{"key":"stat_lifesteal","value":-5,"custom_key":""}],{"stat_lifesteal":-100},3) == 0.0, "chunky unusable lifesteal drawback does not inflate cost")
 	check(policy.score_effects([{"key":"consumable_heal","value":1,"custom_key":""}],{},3) > 0.0, "chunky pickup healing valued")
+	policy.character = "character_old"
+	check(policy.weights({"stat_speed":-10},3)["stat_speed"] > policy.weights({"stat_speed":15},3)["stat_speed"], "old repairs native movement penalty")
 	if failures > 0:
 		quit(1)
 		return

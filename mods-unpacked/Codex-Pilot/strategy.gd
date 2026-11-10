@@ -37,6 +37,9 @@ func weights(stats, wave):
 		result["stat_range"] = 0.35 if stats.get("stat_range",0) < 0 else 0.08
 	# Luck improves native loot and tier rolls; recovering negative luck matters.
 	result["stat_luck"] = (0.7 if wave < 12 else 0.3) * (1.5 if stats.get("stat_luck",0) < 0 else 1.0) * (1.0+min(0.5,stats.get("trees",0)*0.1))
+	if character == "character_old":
+		result["stat_speed"] = 4.0 if stats.get("stat_speed",0) < 15 else 0.3
+		result["stat_armor"] *= 1.2
 	if character == "character_mage":
 		result["stat_ranged_damage"] = 0.0
 		result["stat_melee_damage"] = 0.0

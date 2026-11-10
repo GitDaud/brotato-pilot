@@ -102,6 +102,8 @@ func _ready():
 		gun_profile = "mage_tasers"
 	if selected_character == "character_chunky":
 		gun_profile = "chunky_shotguns"
+	if selected_character == "character_old":
+		gun_profile = "old_shotguns"
 	policy.character = selected_character
 	var settings_file = File.new()
 	if settings_file.open(evidence + "/adaptation.json", File.READ) == OK:
@@ -137,7 +139,7 @@ func _ready():
 	button.text = "Codex Pilot ON / OFF"
 	button.connect("pressed", self, "toggle")
 	box.add_child(button)
-	record("loaded", {"version":"0.6.14-dev","profile":gun_profile,"development_speed":development_speed})
+	record("loaded", {"version":"0.6.15-dev","profile":gun_profile,"development_speed":development_speed})
 	verify_recovery()
 
 func toggle():
@@ -337,7 +339,7 @@ func synergy_bonus(item_id, owned_ids = []):
 	return 0.0
 
 func weapon_value(item, weapons):
-	if policy.character == "character_chunky":
+	if policy.character in ["character_chunky", "character_old"]:
 		return 175.0 + item.tier * 35.0 if item.weapon_id == "weapon_double_barrel_shotgun" else -1.0
 	if policy.character == "character_mage":
 		return 150.0 + item.tier * 35.0 if item.weapon_id == "weapon_taser" else -1.0
@@ -1023,7 +1025,7 @@ func report(scene):
 			state["hp"] = p.current_stats.health
 			state["max_hp"] = p.max_stats.health
 			state["position"] = [p.global_position.x,p.global_position.y]
-	state["strategy_version"] = "0.6.14-dev"
+	state["strategy_version"] = "0.6.15-dev"
 	state["profile"] = gun_profile
 	state["character"] = selected_character
 	state["run_id"] = recording_id
@@ -1150,7 +1152,7 @@ func _exit_tree():
 
 func analyze_run():
 	var analysis = policy.analyze(recent_combat, RunData.current_wave)
-	analysis["strategy_version"] = "0.6.14-dev"
+	analysis["strategy_version"] = "0.6.15-dev"
 	analysis["run_id"] = recording_id
 	analysis["gun_profile"] = gun_profile
 	analysis["character"] = selected_character
