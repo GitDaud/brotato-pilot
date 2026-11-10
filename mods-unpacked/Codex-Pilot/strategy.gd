@@ -37,6 +37,12 @@ func weights(stats, wave):
 		result["stat_range"] = 0.35 if stats.get("stat_range",0) < 0 else 0.08
 	# Luck improves native loot and tier rolls; recovering negative luck matters.
 	result["stat_luck"] = (0.7 if wave < 12 else 0.3) * (1.5 if stats.get("stat_luck",0) < 0 else 1.0) * (1.0+min(0.5,stats.get("trees",0)*0.1))
+	if character == "character_lucky":
+		result["stat_luck"] = 1.2 if stats.get("stat_luck",0) < 200 else 0.6
+		result["stat_attack_speed"] = 6.0 if stats.get("stat_attack_speed",0) < 0 else 1.2
+		result["stat_armor"] *= 1.5
+		result["stat_percent_damage"] = 1.2
+		result["consumable_heal"] = 2.0
 	if character == "character_old":
 		result["stat_percent_damage"] = 1.8 if stats.get("stat_percent_damage",0) < 30 else 0.9
 		result["stat_speed"] = 8.0 if stats.get("stat_speed",0) < 10 else 0.3
@@ -90,6 +96,8 @@ func score_effects(effects, stats, wave):
 	var scored_harvesting = float(stats.get("stat_harvesting",0))
 	for e in effects:
 		# Pilot continuously moves; a conditional stationary bonus is not active armor.
+		if character == "character_lucky" and e.custom_key in ["dmg_when_pickup_gold", "dmg_when_death"]:
+			continue # Luck-scaled proc damage is not a flat luck gain.
 		if e.custom_key == "temp_stats_while_not_moving":
 			continue
 		if character == "character_chunky" and e.key in ["stat_lifesteal", "stat_speed"]:
@@ -101,6 +109,8 @@ func score_effects(effects, stats, wave):
 		if e.key == "stat_harvesting":
 			# Future currency buys fewer stats when native shop prices are higher.
 			var economy_weight = 0.15
+			if character == "character_lucky" and (wave >= 6 or scored_harvesting >= 30):
+				economy_weight *= 0.3
 			if character == "character_old" and (wave >= 8 or scored_harvesting >= 40 or (wave >= 4 and stats.get("stat_percent_damage",0) < 20)):
 				economy_weight *= 0.25
 			score += harvesting_return(scored_harvesting,e.value,wave,stats.get("harvesting_growth",5.0))*economy_weight/max(0.1,1.0+stats.get("items_price",0)/100.0)
@@ -244,6 +254,8 @@ func purchase_worthwhile(score, cost):
 	return score >= max(4.0, (cost + 15) * 0.04)
 
 func weapon_purchase_worthwhile(score, cost, wave):
+	if character == "character_lucky" and wave >= 10:
+		return score >= max(3.0,(cost+15.0)*0.025)
 	# Mutant's native +50% prices otherwise strand positive gun upgrades while
 	# available funds remain unused. Keep the early rule and minimum gain floor.
 	if character == "character_mutant" and wave >= 10:
@@ -261,10 +273,12 @@ func upgrade_score(effects, stats, wave, score):
 	return score
 
 func reroll_upgrade(effects, stats, wave, score, gold, cost, rolls, spent):
-	if not character in ["character_mutant", "character_old"] or rolls >= 2 or cost < 0:
+	if not character in ["character_mutant", "character_old", "character_lucky"] or rolls >= 2 or cost < 0:
 		return false
 	if gold-cost < (30+wave*2 if wave < 8 else 80) or cost > max(5.0,gold*0.08) or spent+cost > max(8.0,gold*0.12):
 		return false
+	if character == "character_lucky":
+		return score < 10.0
 	if character == "character_old":
 		# Keep useful offers; reroll only weak choices within the shared budget.
 		return score < 12.0

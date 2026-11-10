@@ -16,3 +16,5 @@ Current user-selected next character: Mage (character_mage), feature/mage-strate
 Current user-selected character: Chunky (character_chunky), feature/chunky-strategy. Mage D5 verified and merged.
 
 Current campaign character: Old (character_old), feature/old-strategy. Chunky D5 verified and merged. Follow native base_game_set character order, skipping only saved clears; next Lucky, then Generalist because Mutant is already cleared.
+
+Current campaign character: Lucky (character_lucky), feature/lucky-strategy. Old D5 verified and merged; progress 8/10. Next native-order uncleared role: Generalist.
