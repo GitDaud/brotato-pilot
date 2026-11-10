@@ -111,6 +111,11 @@ func _init():
 	check(policy.score_effects([{"key":"stat_lifesteal","value":5,"custom_key":""}],{"stat_lifesteal":-100},3) == 0.0, "chunky unusable lifesteal not valued")
 	policy.character = "character_apprentice"
 	check(policy.weights({},3)["stat_max_hp"] > 3.2, "apprentice offsets HP loss per level")
+	policy.character = "character_crazy"
+	policy.brawler = true
+	check(policy.weights({},5)["stat_ranged_damage"] == 0.0, "crazy avoids ranged investment")
+	check(policy.weights({},5)["stat_melee_damage"] > 0.0, "crazy values melee")
+	check(policy.weights({},5)["stat_crit_chance"] > policy.weights({"stat_crit_chance":35},5)["stat_crit_chance"], "crazy crit foundation tapers")
 	if failures > 0:
 		quit(1)
 		return

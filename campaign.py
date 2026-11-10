@@ -14,7 +14,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 RUN = ROOT / 'run'
 SAVE = Path.home() / 'AppData/Roaming/Brotato/76561198851811283/save_v3_1.json'
-PLAN = ['ranger', 'mutant', 'old', 'loud', 'lich', 'apprentice', 'chunky', 'explorer']
+PLAN = ['crazy', 'ranger', 'mutant', 'old', 'loud', 'lich', 'apprentice', 'chunky', 'explorer']
 
 
 def read_json(path):
@@ -103,12 +103,14 @@ def main():
             write_status('branch_required', character=character,
                          expected_branch=expected_branch, actual_branch=branch)
             return
+        profile = 'brawler' if short_name == 'crazy' else 'ranged'
+        weapon = 'weapon_knife' if short_name == 'crazy' else 'weapon_smg'
         (RUN / 'challenge.json').write_text(json.dumps(dict(
-            enabled=True, difficulty=5, profile='ranged', character=character,
-            weapon='weapon_smg')), encoding='utf-8')
+            enabled=True, difficulty=5, profile=profile, character=character,
+            weapon=weapon)), encoding='utf-8')
         launched_at = time.time()
         result = subprocess.run([sys.executable, str(ROOT / 'launch_background.py'),
-                                 '--profile', 'ranged', '--speed', '1'], cwd=ROOT,
+                                 '--profile', profile, '--speed', '1'], cwd=ROOT,
                                 capture_output=True, text=True, check=True)
         launch = json.loads(result.stdout.strip())
         pid = launch['pid']
