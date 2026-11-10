@@ -2,7 +2,7 @@
 
 这是已有 Windows 本机自动玩家项目的源码快照。远程策略历史实战版本为 0.5.25，斗士最新实战版本为 0.6.3-dev。manifest.json 的版本字段仍为历史值 0.5.0。
 
-Latest progress: Lucky cleared native Danger 5, verified by settlement and save. Nine qualifying clears (9/10). Danger 6 remains locked. Next: Generalist, on its own branch. Original speed, recording off.
+Latest progress: Generalist cleared native Danger 5. All 10 qualifying clears verified; native Danger 6 (Nightmare) is unlocked (max_selectable_difficulty=6). Character branches merged only after settlement/save verification. Campaign complete; no automatic Danger 6 launch. Original speed, recording off. See docs/generalist-danger5.md.
 
 ### 角色开发分支
 
