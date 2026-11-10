@@ -148,6 +148,10 @@ func _init():
 	check(policy.score_effects([{"key":"stat_attack_speed","value":5,"custom_key":""}],{"stat_attack_speed":-45},6) > 25.0, "lucky wave6 attack recovery beats old luck score")
 	check(policy.reroll_upgrade([],{},4,3.6,150,3,0,0), "lucky weak regen choice can reroll")
 	check(not policy.reroll_upgrade([],{},4,3.6,150,3,2,6), "lucky rerolls capped")
+	policy.character = "character_lucky"
+	check(policy.weapon_purchase_worthwhile(5.528211,139,11), "lucky wave11 affordable sling upgrade admitted")
+	check(policy.weapon_purchase_worthwhile(5.267384,167,15), "lucky wave15 affordable sling upgrade admitted")
+	check(not policy.weapon_purchase_worthwhile(-1,52,15), "lucky negative upgrade rejected")
 	if failures > 0:
 		quit(1)
 		return

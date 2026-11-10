@@ -254,6 +254,8 @@ func purchase_worthwhile(score, cost):
 	return score >= max(4.0, (cost + 15) * 0.04)
 
 func weapon_purchase_worthwhile(score, cost, wave):
+	if character == "character_lucky" and wave >= 10:
+		return score >= max(3.0,(cost+15.0)*0.025)
 	# Mutant's native +50% prices otherwise strand positive gun upgrades while
 	# available funds remain unused. Keep the early rule and minimum gain floor.
 	if character == "character_mutant" and wave >= 10:
