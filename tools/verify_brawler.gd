@@ -48,6 +48,9 @@ func _init():
 	check(policy.target_priority(false,false,false,false,true) > policy.target_priority(false,true,true,true), "tree above other enemies")
 	check(policy.special_item_score("item_coupon",2,20,0) > 4.0, "early coupon pays back")
 	check(policy.special_item_score("item_coupon",19,60,0) == 0.0, "late coupon rejected")
+	check(policy.special_item_score("item_coupon",2,20,0,150,1.5) < policy.special_item_score("item_coupon",2,20,0,150,1.0), "mutant coupon uses native additive price factor")
+	var harvest_effect = {"key":"stat_harvesting","value":8,"custom_key":""}
+	check(policy.score_effects([harvest_effect],{"items_price":50},3) < policy.score_effects([harvest_effect],{"items_price":0},3), "higher native prices reduce future currency purchasing power")
 	check(policy.special_item_score("item_tree",2,20,0) > 4.0, "early tree investment")
 	check(policy.special_item_score("item_tree",19,62,0) == 0.0, "late tree rejected")
 	check(policy.special_item_score("item_cute_monkey",5,42,0) > 4.0, "monkey recovery no longer zero")
@@ -85,6 +88,24 @@ func _init():
 	check(policy.new_contact_penalty(Vector2(100,0),Vector2(-600,0),72,0,0.65,0.2) >= 6000, "brief new body crossing still costs a hit")
 	check(policy.new_contact_penalty(Vector2(30,0),Vector2(600,0),72,0,0.65,0.1) == 0, "existing overlap retains fast escape model")
 	check(policy.new_contact_penalty(Vector2.ZERO,Vector2(0,300),42,0.48,0.6,0) == 0, "escape before activation avoids new hit cost")
+	policy.character = "character_mutant"
+	check(policy.weapon_purchase_worthwhile(8.880333,314,17), "real affordable mutant tier3 shotgun upgrade admitted")
+	check(policy.weapon_purchase_worthwhile(4.383375,132,10), "real mutant tier2 shotgun upgrade admitted")
+	check(not policy.weapon_purchase_worthwhile(-1,107,18), "mutant still rejects modeled damage losses")
+	check(not policy.weapon_purchase_worthwhile(3.9,40,17), "mutant still requires minimum useful gain")
+	check(not policy.weapon_purchase_worthwhile(8.880333,314,9), "mutant retains early investment threshold")
+	policy.character = "character_ranger"
+	check(not policy.weapon_purchase_worthwhile(8.880333,314,17), "role-specific threshold does not change ranger")
+	policy.character = "character_mutant"
+	var ranged_upgrade = [{"key":"stat_ranged_damage","value":1}]
+	var harvesting_upgrade = [{"key":"stat_harvesting","value":8}]
+	check(policy.upgrade_score(ranged_upgrade,{"stat_ranged_damage":1},3,14.132231) > policy.upgrade_score(harvesting_upgrade,{"stat_ranged_damage":1},3,25.1), "real mutant wave3 ranged upgrade beats harvesting when damage starved")
+	check(policy.upgrade_score(ranged_upgrade,{"stat_ranged_damage":1},5,28.264463) > 31.2, "real wave5 ranged upgrade beats noncritical HP purchase")
+	check(policy.upgrade_score(ranged_upgrade,{"stat_ranged_damage":20},10,10.0) == 10.0, "damage foundation boost ends after target")
+	check(policy.reroll_upgrade([{"key":"stat_dodge","value":6}],{"stat_ranged_damage":3},10,5.4,300,10,0,0), "real weak wave10 choice can reroll")
+	check(not policy.reroll_upgrade([{"key":"stat_dodge","value":6}],{"stat_ranged_damage":3},10,5.4,300,10,2,20), "upgrade reroll cap applies across same wave")
+	check(not policy.reroll_upgrade([{"key":"stat_dodge","value":6}],{"stat_ranged_damage":3},10,5.4,85,10,0,0), "upgrade reroll preserves weapon buying funds")
+	check(not policy.reroll_upgrade([{"key":"stat_armor","value":1}],{"stat_ranged_damage":3,"stat_armor":1},10,9,300,10,0,0), "useful armor repair is kept")
 	policy.character = "character_chunky"
 	check(policy.score_effects([{"key":"stat_speed","value":3,"custom_key":""}],{"stat_speed":0,"stat_gains":{"stat_speed":0}},3) == 0.0, "chunky cannot buy speed gains")
 	check(policy.score_effects([{"key":"stat_lifesteal","value":5,"custom_key":""}],{"stat_lifesteal":-100},3) == 0.0, "chunky unusable lifesteal not valued")

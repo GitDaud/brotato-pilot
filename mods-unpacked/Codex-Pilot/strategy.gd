@@ -80,7 +80,8 @@ func score_effects(effects, stats, wave):
 		if not w.has(e.key):
 			continue
 		if e.key == "stat_harvesting":
-			score += harvesting_return(scored_harvesting,e.value,wave,stats.get("harvesting_growth",5.0))*0.15
+			# Future currency buys fewer stats when native shop prices are higher.
+			score += harvesting_return(scored_harvesting,e.value,wave,stats.get("harvesting_growth",5.0))*0.15/max(0.1,1.0+stats.get("items_price",0)/100.0)
 			scored_harvesting += e.value
 			continue
 		var weight = w[e.key]
@@ -129,10 +130,11 @@ func new_contact_penalty(offset, velocity, radius, active_from, active_to, fract
 
 # Conservative pilot estimates, not native guaranteed returns. Price is charged
 # before admitting an investment; late shops therefore lose economic priority.
-func special_item_score(id, wave, price, copies, future_shop_budget = 150.0):
+func special_item_score(id, wave, price, copies, future_shop_budget = 150.0, price_factor = 1.0):
 	var remaining = max(0,20-wave)
 	if id == "item_coupon":
-		return max(0.0,(remaining*future_shop_budget*0.05-price)*0.3)
+		# Coupon removes five additive price points, not 5% of the paid total.
+		return max(0.0,(remaining*future_shop_budget*0.05/max(0.1,price_factor)-price)*0.3)
 	if id == "item_tree":
 		return max(0.0,(remaining*3.0-price)*0.3)
 	if id == "item_recycling_machine":
@@ -212,6 +214,43 @@ func can_reroll(gold, cost, rolls, weapon_count, wave, opening_gold, spent):
 # Same admission rule for marginal weapons and items, before ranking by cost.
 func purchase_worthwhile(score, cost):
 	return score >= max(4.0, (cost + 15) * 0.04)
+
+func weapon_purchase_worthwhile(score, cost, wave):
+	# Mutant's native +50% prices otherwise strand positive gun upgrades while
+	# available funds remain unused. Keep the early rule and minimum gain floor.
+	if character == "character_mutant" and wave >= 10:
+		return score >= max(4.0,(cost+15)*0.025)
+	return purchase_worthwhile(score,cost)
+
+func upgrade_score(effects, stats, wave, score):
+	if character != "character_mutant" or stats.get("stat_ranged_damage",0) >= max(8,wave):
+		return score
+	for effect in effects:
+		if effect.value > 0 and effect.key == "stat_ranged_damage":
+			return score*1.75
+		if effect.value > 0 and effect.key == "stat_harvesting":
+			return score*0.35
+	return score
+
+func reroll_upgrade(effects, stats, wave, score, gold, cost, rolls, spent):
+	if character != "character_mutant" or rolls >= 2 or cost < 0:
+		return false
+	if gold-cost < (30+wave*2 if wave < 8 else 80) or cost > max(5.0,gold*0.08) or spent+cost > max(8.0,gold*0.12):
+		return false
+	for effect in effects:
+		if effect.value <= 0:
+			continue
+		if effect.key == "stat_ranged_damage":
+			return false
+		if effect.key == "stat_max_hp" and stats.get("stat_max_hp",0) < 20:
+			return false
+		if effect.key == "stat_armor" and stats.get("stat_armor",0) < max(2.0,wave*0.6):
+			return false
+		if effect.key == "stat_speed" and stats.get("stat_speed",0) < 15:
+			return false
+		if effect.key == "stat_lifesteal" and wave >= 8 and stats.get("stat_lifesteal",0) < 5:
+			return false
+	return score < 10.0 or (score < 20.0 and stats.get("stat_ranged_damage",0) < max(8,wave))
 
 # Unmodeled forced low-health wave starts must not be priced as pure max-HP gains.
 func forced_low_health_start(effects):
