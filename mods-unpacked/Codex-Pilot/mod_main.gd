@@ -106,6 +106,8 @@ func _ready():
 		gun_profile = "old_shotguns"
 	if selected_character == "character_lucky":
 		gun_profile = "lucky_slingshots"
+	if selected_character == "character_generalist":
+		gun_profile = "generalist_spear_shotgun"
 	policy.character = selected_character
 	var settings_file = File.new()
 	if settings_file.open(evidence + "/adaptation.json", File.READ) == OK:
@@ -141,7 +143,7 @@ func _ready():
 	button.text = "Codex Pilot ON / OFF"
 	button.connect("pressed", self, "toggle")
 	box.add_child(button)
-	record("loaded", {"version":"0.6.21-dev","profile":gun_profile,"development_speed":development_speed})
+	record("loaded", {"version":"0.6.23-dev","profile":gun_profile,"development_speed":development_speed})
 	verify_recovery()
 
 func toggle():
@@ -298,6 +300,10 @@ func value_item(item, price = 0):
 	var damage_key = damage_stat()
 	var ranged_delta = 0.0
 	for effect in item.effects:
+		if policy.character == "character_generalist" and effect.key == "stat_melee_damage" and effect.custom_key == "":
+			var melee_delta = effect.value*stats.stat_gains.get("stat_melee_damage",1.0)
+			score -= melee_delta*max(policy.weights(stats,RunData.current_wave).get("stat_melee_damage",0.0),4.0 if melee_delta < 0 else 0.0)
+			score += ranged_damage_score(RunData.get_player_weapons(0),stats,melee_delta*0.5)
 		if effect.key == damage_key and effect.custom_key != "temp_stats_while_not_moving":
 			ranged_delta += effect.value*stats.stat_gains.get(damage_key,1.0)
 	if ranged_delta != 0.0:
@@ -345,6 +351,21 @@ func synergy_bonus(item_id, owned_ids = []):
 	return 0.0
 
 func weapon_value(item, weapons):
+	if policy.character == "character_generalist":
+		if not item.weapon_id in ["weapon_spear", "weapon_stick", "weapon_fist", "weapon_jousting_lance", "weapon_cacti_club", "weapon_scissors", "weapon_chopper", "weapon_double_barrel_shotgun", "weapon_smg"]:
+			return -1.0
+		var count = 0
+		var matching = false
+		for owned in weapons:
+			if owned.type == item.type:
+				count += 1
+				if owned.my_id == item.my_id and item.upgrades_into != null:
+					matching = true
+		# Native duplicate auto-combines without increasing the type count,
+		# even before the other weapon class has filled its three slots.
+		if count >= 3 and not matching:
+			return -1.0
+		return 175.0 + item.tier * 35.0
 	if policy.character == "character_lucky":
 		return 160.0 + item.tier * 35.0 if item.weapon_id == "weapon_slingshot" else -1.0
 	if policy.character in ["character_chunky", "character_old"]:
@@ -428,11 +449,14 @@ func base_gun_dps(weapon, ranged_damage):
 	var stats = weapon.stats
 	var hit = float(stats.damage)
 	var damage_key = damage_stat()
+	if policy.character == "character_generalist" and weapon.type == 0:
+		damage_key = "stat_melee_damage"
+		ranged_damage *= 2.0
 	for scaling in stats.scaling_stats:
 		if scaling[0] == damage_key or scaling[0] == Keys.generate_hash(damage_key):
 			hit += ranged_damage * scaling[1]
 	var duration = stats.get_base_cooldown_value(stats,1.0)
-	var hits = 1 if policy.brawler else stats.nb_projectiles
+	var hits = 1 if weapon.type == 0 else stats.nb_projectiles
 	return max(1.0,hit) * hits / max(0.05,duration)
 
 # Normalize direct attack gains to the existing percent-damage utility.
@@ -1033,7 +1057,7 @@ func report(scene):
 			state["hp"] = p.current_stats.health
 			state["max_hp"] = p.max_stats.health
 			state["position"] = [p.global_position.x,p.global_position.y]
-	state["strategy_version"] = "0.6.21-dev"
+	state["strategy_version"] = "0.6.23-dev"
 	state["profile"] = gun_profile
 	state["character"] = selected_character
 	state["run_id"] = recording_id
@@ -1160,7 +1184,7 @@ func _exit_tree():
 
 func analyze_run():
 	var analysis = policy.analyze(recent_combat, RunData.current_wave)
-	analysis["strategy_version"] = "0.6.21-dev"
+	analysis["strategy_version"] = "0.6.23-dev"
 	analysis["run_id"] = recording_id
 	analysis["gun_profile"] = gun_profile
 	analysis["character"] = selected_character
@@ -1343,6 +1367,19 @@ func verify_recovery():
 	policy.brawler = false
 	passed = passed and weapon_value(shotgun,[]) > 0 and weapon_value(actual_smg,[]) < 0
 	var checks = File.new()
+	policy.character = "character_generalist"
+	var generalist_spear = load("res://weapons/melee/spear/1/spear_data.tres")
+	passed = passed and weapon_value(generalist_spear,[]) > 0
+	passed = passed and weapon_value(shotgun.upgrades_into,[shotgun,shotgun,shotgun]) < 0
+	passed = passed and weapon_value(shotgun,[shotgun,shotgun,shotgun]) > 0
+	passed = passed and weapon_value(generalist_spear.upgrades_into,[generalist_spear,generalist_spear,generalist_spear]) < 0
+	passed = passed and weapon_value(generalist_spear,[generalist_spear,generalist_spear,generalist_spear]) > 0
+	var generalist_stick = load("res://weapons/melee/stick/1/stick_data.tres")
+	passed = passed and weapon_value(generalist_stick,[shotgun,shotgun,shotgun]) > 0
+	passed = passed and weapon_value(generalist_stick,[generalist_spear,generalist_spear,generalist_spear]) < 0
+	passed = passed and weapon_value(shotgun,[shotgun,shotgun,shotgun,generalist_spear,generalist_spear,generalist_spear]) > 0
+	passed = passed and base_gun_dps(generalist_spear,10) > base_gun_dps(generalist_spear,5)
+	passed = passed and loadout_dps([generalist_spear,shotgun],10) > loadout_dps([generalist_spear,shotgun],5)
 	policy.character = "character_lucky"
 	var lucky_sling = load("res://weapons/ranged/slingshot/1/slingshot_data.tres")
 	passed = passed and weapon_value(lucky_sling,[]) > 0 and weapon_value(actual_smg,[]) < 0

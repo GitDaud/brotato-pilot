@@ -18,3 +18,7 @@ Current user-selected character: Chunky (character_chunky), feature/chunky-strat
 Current campaign character: Old (character_old), feature/old-strategy. Chunky D5 verified and merged. Follow native base_game_set character order, skipping only saved clears; next Lucky, then Generalist because Mutant is already cleared.
 
 Current campaign character: Lucky (character_lucky), feature/lucky-strategy. Old D5 verified and merged; progress 8/10. Next native-order uncleared role: Generalist.
+
+Current campaign character: Generalist (character_generalist), feature/generalist-strategy. Lucky D5 verified and merged; progress 9/10. Stop starting runs when native Danger6 unlocks.
+
+Campaign completed: Generalist D5 native victory verified, 10/10 qualifying clears, native Danger6 unlocked. Stop automatic character progression and do not start Danger6 without new user direction.
