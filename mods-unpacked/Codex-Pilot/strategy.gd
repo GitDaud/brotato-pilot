@@ -101,7 +101,7 @@ func score_effects(effects, stats, wave):
 		if e.key == "stat_harvesting":
 			# Future currency buys fewer stats when native shop prices are higher.
 			var economy_weight = 0.15
-			if character == "character_old" and (scored_harvesting >= 40 or (wave >= 4 and stats.get("stat_percent_damage",0) < 20)):
+			if character == "character_old" and (wave >= 8 or scored_harvesting >= 40 or (wave >= 4 and stats.get("stat_percent_damage",0) < 20)):
 				economy_weight *= 0.25
 			score += harvesting_return(scored_harvesting,e.value,wave,stats.get("harvesting_growth",5.0))*economy_weight/max(0.1,1.0+stats.get("items_price",0)/100.0)
 			scored_harvesting += e.value
@@ -111,6 +111,10 @@ func score_effects(effects, stats, wave):
 		if e.value < 0:
 			weight = max(weight, {"stat_max_hp":2.8,"stat_armor":5.0,"stat_ranged_damage":6.0,"stat_melee_damage":4.0,"stat_speed":1.2,"stat_attack_speed":1.0,"stat_lifesteal":2.0}.get(e.key, 0.0))
 		var effective_value = float(e.value)*stats.get("stat_gains",{}).get(e.key,1.0)
+		if character == "character_old" and e.key == "stat_speed" and effective_value > 0:
+			var repair = min(effective_value,max(0.0,10.0-stats.get("stat_speed",0)))
+			score += repair*8.0 + (effective_value-repair)*0.3
+			continue
 		if e.key == "stat_lifesteal":
 			var current = float(stats.get("stat_lifesteal",0))
 			effective_value = min(current+effective_value,100.0)-min(current,100.0)
