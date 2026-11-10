@@ -143,7 +143,7 @@ func _ready():
 	button.text = "Codex Pilot ON / OFF"
 	button.connect("pressed", self, "toggle")
 	box.add_child(button)
-	record("loaded", {"version":"0.6.22-dev","profile":gun_profile,"development_speed":development_speed})
+	record("loaded", {"version":"0.6.23-dev","profile":gun_profile,"development_speed":development_speed})
 	verify_recovery()
 
 func toggle():
@@ -352,16 +352,18 @@ func synergy_bonus(item_id, owned_ids = []):
 
 func weapon_value(item, weapons):
 	if policy.character == "character_generalist":
-		if not item.weapon_id in ["weapon_spear", "weapon_double_barrel_shotgun"]:
+		if not item.weapon_id in ["weapon_spear", "weapon_stick", "weapon_fist", "weapon_jousting_lance", "weapon_cacti_club", "weapon_scissors", "weapon_chopper", "weapon_double_barrel_shotgun", "weapon_smg"]:
 			return -1.0
 		var count = 0
 		var matching = false
 		for owned in weapons:
-			if owned.weapon_id == item.weapon_id:
+			if owned.type == item.type:
 				count += 1
 				if owned.my_id == item.my_id and item.upgrades_into != null:
 					matching = true
-		if count >= 3 and not (weapons.size() >= 6 and matching):
+		# Native duplicate auto-combines without increasing the type count,
+		# even before the other weapon class has filled its three slots.
+		if count >= 3 and not matching:
 			return -1.0
 		return 175.0 + item.tier * 35.0
 	if policy.character == "character_lucky":
@@ -1055,7 +1057,7 @@ func report(scene):
 			state["hp"] = p.current_stats.health
 			state["max_hp"] = p.max_stats.health
 			state["position"] = [p.global_position.x,p.global_position.y]
-	state["strategy_version"] = "0.6.22-dev"
+	state["strategy_version"] = "0.6.23-dev"
 	state["profile"] = gun_profile
 	state["character"] = selected_character
 	state["run_id"] = recording_id
@@ -1182,7 +1184,7 @@ func _exit_tree():
 
 func analyze_run():
 	var analysis = policy.analyze(recent_combat, RunData.current_wave)
-	analysis["strategy_version"] = "0.6.22-dev"
+	analysis["strategy_version"] = "0.6.23-dev"
 	analysis["run_id"] = recording_id
 	analysis["gun_profile"] = gun_profile
 	analysis["character"] = selected_character
@@ -1368,8 +1370,13 @@ func verify_recovery():
 	policy.character = "character_generalist"
 	var generalist_spear = load("res://weapons/melee/spear/1/spear_data.tres")
 	passed = passed and weapon_value(generalist_spear,[]) > 0
-	passed = passed and weapon_value(shotgun,[shotgun,shotgun,shotgun]) < 0
-	passed = passed and weapon_value(generalist_spear,[generalist_spear,generalist_spear,generalist_spear]) < 0
+	passed = passed and weapon_value(shotgun.upgrades_into,[shotgun,shotgun,shotgun]) < 0
+	passed = passed and weapon_value(shotgun,[shotgun,shotgun,shotgun]) > 0
+	passed = passed and weapon_value(generalist_spear.upgrades_into,[generalist_spear,generalist_spear,generalist_spear]) < 0
+	passed = passed and weapon_value(generalist_spear,[generalist_spear,generalist_spear,generalist_spear]) > 0
+	var generalist_stick = load("res://weapons/melee/stick/1/stick_data.tres")
+	passed = passed and weapon_value(generalist_stick,[shotgun,shotgun,shotgun]) > 0
+	passed = passed and weapon_value(generalist_stick,[generalist_spear,generalist_spear,generalist_spear]) < 0
 	passed = passed and weapon_value(shotgun,[shotgun,shotgun,shotgun,generalist_spear,generalist_spear,generalist_spear]) > 0
 	passed = passed and base_gun_dps(generalist_spear,10) > base_gun_dps(generalist_spear,5)
 	passed = passed and loadout_dps([generalist_spear,shotgun],10) > loadout_dps([generalist_spear,shotgun],5)
