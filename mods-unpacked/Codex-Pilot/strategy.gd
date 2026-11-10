@@ -37,6 +37,11 @@ func weights(stats, wave):
 		result["stat_range"] = 0.35 if stats.get("stat_range",0) < 0 else 0.08
 	# Luck improves native loot and tier rolls; recovering negative luck matters.
 	result["stat_luck"] = (0.7 if wave < 12 else 0.3) * (1.5 if stats.get("stat_luck",0) < 0 else 1.0) * (1.0+min(0.5,stats.get("trees",0)*0.1))
+	if character == "character_old":
+		result["stat_percent_damage"] = 1.8 if stats.get("stat_percent_damage",0) < 30 else 0.9
+		result["stat_speed"] = 8.0 if stats.get("stat_speed",0) < 10 else 0.3
+		result["stat_armor"] *= 2.5 if stats.get("stat_armor",0) < armor_target else 1.0
+		result["stat_max_hp"] *= 1.5 if stats.get("stat_max_hp",0) < hp_target else 1.0
 	if character == "character_mage":
 		result["stat_ranged_damage"] = 0.0
 		result["stat_melee_damage"] = 0.0
@@ -95,7 +100,10 @@ func score_effects(effects, stats, wave):
 			continue
 		if e.key == "stat_harvesting":
 			# Future currency buys fewer stats when native shop prices are higher.
-			score += harvesting_return(scored_harvesting,e.value,wave,stats.get("harvesting_growth",5.0))*0.15/max(0.1,1.0+stats.get("items_price",0)/100.0)
+			var economy_weight = 0.15
+			if character == "character_old" and (wave >= 8 or scored_harvesting >= 40 or (wave >= 4 and stats.get("stat_percent_damage",0) < 20)):
+				economy_weight *= 0.25
+			score += harvesting_return(scored_harvesting,e.value,wave,stats.get("harvesting_growth",5.0))*economy_weight/max(0.1,1.0+stats.get("items_price",0)/100.0)
 			scored_harvesting += e.value
 			continue
 		var weight = w[e.key]
@@ -103,6 +111,10 @@ func score_effects(effects, stats, wave):
 		if e.value < 0:
 			weight = max(weight, {"stat_max_hp":2.8,"stat_armor":5.0,"stat_ranged_damage":6.0,"stat_melee_damage":4.0,"stat_speed":1.2,"stat_attack_speed":1.0,"stat_lifesteal":2.0}.get(e.key, 0.0))
 		var effective_value = float(e.value)*stats.get("stat_gains",{}).get(e.key,1.0)
+		if character == "character_old" and e.key == "stat_speed" and effective_value > 0:
+			var repair = min(effective_value,max(0.0,10.0-stats.get("stat_speed",0)))
+			score += repair*8.0 + (effective_value-repair)*0.3
+			continue
 		if e.key == "stat_lifesteal":
 			var current = float(stats.get("stat_lifesteal",0))
 			effective_value = min(current+effective_value,100.0)-min(current,100.0)
@@ -202,6 +214,8 @@ func should_restart(won, analyzed, recording_ended, elapsed):
 
 func breaks_floor(key, delta, stats, wave):
 	var floors = {"stat_speed": min(15.0, wave * 1.5), "stat_ranged_damage": max(0.0, wave - 3.0), "stat_attack_speed": 0.0, "stat_range": -20.0}
+	if character == "character_old" and wave >= 8:
+		floors["stat_percent_damage"] = 20.0
 	if brawler:
 		floors.erase("stat_ranged_damage")
 		floors["stat_melee_damage"] = max(0.0,wave-3.0)
@@ -247,10 +261,13 @@ func upgrade_score(effects, stats, wave, score):
 	return score
 
 func reroll_upgrade(effects, stats, wave, score, gold, cost, rolls, spent):
-	if character != "character_mutant" or rolls >= 2 or cost < 0:
+	if not character in ["character_mutant", "character_old"] or rolls >= 2 or cost < 0:
 		return false
 	if gold-cost < (30+wave*2 if wave < 8 else 80) or cost > max(5.0,gold*0.08) or spent+cost > max(8.0,gold*0.12):
 		return false
+	if character == "character_old":
+		# Keep useful offers; reroll only weak choices within the shared budget.
+		return score < 12.0
 	for effect in effects:
 		if effect.value <= 0:
 			continue

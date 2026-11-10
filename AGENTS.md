@@ -14,3 +14,5 @@ Next character by explicit user direction: Crazy (character_crazy), feature/craz
 Current user-selected next character: Mage (character_mage), feature/mage-strategy. Crazy D5 verified and merged.
 
 Current user-selected character: Chunky (character_chunky), feature/chunky-strategy. Mage D5 verified and merged.
+
+Current campaign character: Old (character_old), feature/old-strategy. Chunky D5 verified and merged. Follow native base_game_set character order, skipping only saved clears; next Lucky, then Generalist because Mutant is already cleared.

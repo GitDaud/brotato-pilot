@@ -125,6 +125,21 @@ func _init():
 	check(policy.score_effects([{"key":"stat_max_hp","value":4,"custom_key":""}],{"stat_max_hp":50,"stat_gains":{"stat_max_hp":1.25}},3) > 0.0, "chunky native HP multiplier valued")
 	check(policy.score_effects([{"key":"stat_lifesteal","value":-5,"custom_key":""}],{"stat_lifesteal":-100},3) == 0.0, "chunky unusable lifesteal drawback does not inflate cost")
 	check(policy.score_effects([{"key":"consumable_heal","value":1,"custom_key":""}],{},3) > 0.0, "chunky pickup healing valued")
+	policy.character = "character_old"
+	check(policy.weights({"stat_speed":-10},3)["stat_speed"] > policy.weights({"stat_speed":15},3)["stat_speed"], "old repairs native movement penalty")
+	policy.character = "character_old"
+	check(policy.weights({"stat_armor":0},6)["stat_armor"] > 20.524131, "old wave6 armor repair beats observed ranged offer")
+	check(policy.weights({"stat_speed":-6},3)["stat_speed"]*3 > 12.0, "old wave3 speed repair beats attack speed offer")
+	check(policy.reroll_upgrade([],{},9,8.1,200,5,0,0), "old weak wave9 dodge choice can reroll")
+	check(not policy.reroll_upgrade([],{},9,8.1,200,5,2,10), "old reroll bounded to two per wave")
+	policy.character = "character_old"
+	check(policy.breaks_floor("stat_percent_damage",-8,{"stat_percent_damage":22},11), "old rejects tractor damage loss below midgame floor")
+	check(not policy.breaks_floor("stat_percent_damage",-8,{"stat_percent_damage":40},11), "old can trade excess damage")
+	check(policy.score_effects([{"key":"stat_harvesting","value":2,"custom_key":""}],{"stat_harvesting":41,"stat_percent_damage":22},8) < 10.0, "old weak economy offer can reroll after economy foundation")
+	policy.character = "character_old"
+	check(policy.score_effects([{"key":"stat_speed","value":9,"custom_key":""}],{"stat_speed":9},11) < 42.937851, "old wave11 speed crossing target cannot beat ranged repair")
+	check(policy.score_effects([{"key":"stat_speed","value":3,"custom_key":""}],{"stat_speed":9},10) < 22.5, "old wave10 armor beats excess movement")
+	check(policy.score_effects([{"key":"stat_harvesting","value":4,"custom_key":""}],{"stat_harvesting":39,"stat_percent_damage":55},10) < 12.0, "old midgame harvest below40 still tapers")
 	if failures > 0:
 		quit(1)
 		return
