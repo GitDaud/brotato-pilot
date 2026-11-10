@@ -8,3 +8,5 @@
 - 不在对局中重打包、覆盖或热加载策略；等待当前局自然结束后再加载新版本。
 
 目前角色顺序：游侠通关后再继续异变体及后续未完成角色。历史 `feature/brawler-strategy` 含早期混合开发记录，保留历史，不再往该分支追加其他角色开发。
+
+Next character by explicit user direction: Crazy (character_crazy), feature/crazy-strategy. Mutant D5 verified and merged.

@@ -95,6 +95,9 @@ func _ready():
 			challenge_difficulty = int(clamp(challenge.get("difficulty", 1), 0, 5))
 			selected_character = str(challenge.get("character",selected_character))
 			selected_weapon = str(challenge.get("weapon",selected_weapon))
+	if selected_character == "character_crazy":
+		policy.brawler = true
+		gun_profile = "crazy_knives"
 	policy.character = selected_character
 	var settings_file = File.new()
 	if settings_file.open(evidence + "/adaptation.json", File.READ) == OK:
@@ -130,7 +133,7 @@ func _ready():
 	button.text = "Codex Pilot ON / OFF"
 	button.connect("pressed", self, "toggle")
 	box.add_child(button)
-	record("loaded", {"version":"0.6.11-dev","profile":gun_profile,"development_speed":development_speed})
+	record("loaded", {"version":"0.6.12-dev","profile":gun_profile,"development_speed":development_speed})
 	verify_recovery()
 
 func toggle():
@@ -324,7 +327,8 @@ func synergy_bonus(item_id, owned_ids = []):
 
 func weapon_value(item, weapons):
 	if policy.brawler:
-		return 150.0 + item.tier * 35.0 if item.weapon_id == "weapon_fist" else -1.0
+		var melee_weapon = "weapon_knife" if selected_character == "character_crazy" else "weapon_fist"
+		return 150.0 + item.tier * 35.0 if item.weapon_id == melee_weapon else -1.0
 	# Ranger starts with a pistol in addition to the selected gun. Permit native
 	# pair upgrades of that existing pistol rather than unrelated pistol tiers.
 	if policy.character == "character_ranger" and item.weapon_id == "weapon_pistol":
@@ -999,7 +1003,7 @@ func report(scene):
 			state["hp"] = p.current_stats.health
 			state["max_hp"] = p.max_stats.health
 			state["position"] = [p.global_position.x,p.global_position.y]
-	state["strategy_version"] = "0.6.11-dev"
+	state["strategy_version"] = "0.6.12-dev"
 	state["profile"] = gun_profile
 	state["character"] = selected_character
 	state["run_id"] = recording_id
@@ -1126,7 +1130,7 @@ func _exit_tree():
 
 func analyze_run():
 	var analysis = policy.analyze(recent_combat, RunData.current_wave)
-	analysis["strategy_version"] = "0.6.11-dev"
+	analysis["strategy_version"] = "0.6.12-dev"
 	analysis["run_id"] = recording_id
 	analysis["gun_profile"] = gun_profile
 	analysis["character"] = selected_character

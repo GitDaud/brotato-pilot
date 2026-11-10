@@ -37,6 +37,11 @@ func weights(stats, wave):
 		result["stat_range"] = 0.35 if stats.get("stat_range",0) < 0 else 0.08
 	# Luck improves native loot and tier rolls; recovering negative luck matters.
 	result["stat_luck"] = (0.7 if wave < 12 else 0.3) * (1.5 if stats.get("stat_luck",0) < 0 else 1.0) * (1.0+min(0.5,stats.get("trees",0)*0.1))
+	if character == "character_crazy":
+		result["stat_attack_speed"] = 2.0 if stats.get("stat_attack_speed",0) < 60 else 0.8
+		result["stat_crit_chance"] = 2.0 if stats.get("stat_crit_chance",0) < 35 else 0.25
+		result["stat_dodge"] = 0.4 if stats.get("stat_dodge",0) < 60 else 0.0
+		result["stat_armor"] *= 1.3
 	if character == "character_apprentice":
 		result["stat_max_hp"] *= 1.8 # Every level costs 2 native HP.
 	if character == "character_ranger" and wave >= 8 and stats.get("stat_armor",0) < armor_target:

@@ -31,6 +31,6 @@
 
 低价值升级增加有界刷新：每波所有升级合计最多两次，限制单次/累计花费，并保留购买武器资金。严重缺生命、缺护甲、缺移速及中期缺吸血时保留相应有效选项。原生升级窗口的按钮、花费和刷新函数已经核对；没有改升级概率或直接指定升级结果。真实报价与升级日志的回归检查、编译、自检通过，实际选择和通关效果待验证。
 
-## 0.6.11 原生通关
+## 0.6.11 native Danger 5 victory
 
-run-20261110-030230-10446：第 20 波危险 5 胜利，原生结算截图和存档 character_mutant/zone0/difficulty5 均确认。最终 80 生命、13 护甲、38 远伤、81% 伤害、50% 攻速、10% 吸血，原速、未录视频。原生升级刷新实际触发；这是单局成功，不代表稳定胜率。累计 4/10，危险 6 尚未解锁。
+Run run-20261110-030230-10446 won wave 20, Danger 5. Settlement PNG and native character_mutant/zone0/difficulty5 save verified. Final HP 80, armor 13, ranged damage 38, damage 81%, attack speed 50%, lifesteal 10%. Native upgrade rerolls occurred. Original speed, no video. One victory does not establish a stable win rate. Progress 4/10; Danger 6 remains locked.
