@@ -120,6 +120,11 @@ func _init():
 	policy.brawler = false
 	check(policy.score_effects([{"key":"stat_ranged_damage","value":5,"custom_key":""}],{"stat_gains":{"stat_ranged_damage":0}},3) == 0.0, "mage cannot buy ranged gains")
 	check(policy.score_effects([{"key":"stat_elemental_damage","value":2,"custom_key":""}],{"stat_gains":{"stat_elemental_damage":1.25}},3) == 25.0, "mage native elemental gain multiplier")
+	policy.character = "character_chunky"
+	policy.brawler = false
+	check(policy.score_effects([{"key":"stat_max_hp","value":4,"custom_key":""}],{"stat_max_hp":50,"stat_gains":{"stat_max_hp":1.25}},3) > 0.0, "chunky native HP multiplier valued")
+	check(policy.score_effects([{"key":"stat_lifesteal","value":-5,"custom_key":""}],{"stat_lifesteal":-100},3) == 0.0, "chunky unusable lifesteal drawback does not inflate cost")
+	check(policy.score_effects([{"key":"consumable_heal","value":1,"custom_key":""}],{},3) > 0.0, "chunky pickup healing valued")
 	if failures > 0:
 		quit(1)
 		return

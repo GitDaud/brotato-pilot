@@ -2,7 +2,7 @@
 
 这是已有 Windows 本机自动玩家项目的源码快照。远程策略历史实战版本为 0.5.25，斗士最新实战版本为 0.6.3-dev。manifest.json 的版本字段仍为历史值 0.5.0。
 
-Latest progress: Crazy cleared native Danger 5, verified by settlement and save. Well Rounded, Brawler, Ranger, Mutant and Crazy: 5/10. Danger 6 remains locked. Next: Mage. Original speed, recording off.
+Latest progress: Mage cleared native Danger 5, verified by settlement and save. Well Rounded, Brawler, Ranger, Mutant, Crazy and Mage: 6/10. Danger 6 remains locked. Next: Chunky. Original speed, recording off.
 
 ### 角色开发分支
 
