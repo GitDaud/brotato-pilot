@@ -10,3 +10,5 @@
 目前角色顺序：游侠通关后再继续异变体及后续未完成角色。历史 `feature/brawler-strategy` 含早期混合开发记录，保留历史，不再往该分支追加其他角色开发。
 
 Next character by explicit user direction: Crazy (character_crazy), feature/crazy-strategy. Mutant D5 verified and merged.
+
+Current user-selected next character: Mage (character_mage), feature/mage-strategy. Crazy D5 verified and merged.

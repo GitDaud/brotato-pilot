@@ -116,6 +116,10 @@ func _init():
 	check(policy.weights({},5)["stat_ranged_damage"] == 0.0, "crazy avoids ranged investment")
 	check(policy.weights({},5)["stat_melee_damage"] > 0.0, "crazy values melee")
 	check(policy.weights({},5)["stat_crit_chance"] > policy.weights({"stat_crit_chance":35},5)["stat_crit_chance"], "crazy crit foundation tapers")
+	policy.character = "character_mage"
+	policy.brawler = false
+	check(policy.score_effects([{"key":"stat_ranged_damage","value":5,"custom_key":""}],{"stat_gains":{"stat_ranged_damage":0}},3) == 0.0, "mage cannot buy ranged gains")
+	check(policy.score_effects([{"key":"stat_elemental_damage","value":2,"custom_key":""}],{"stat_gains":{"stat_elemental_damage":1.25}},3) == 25.0, "mage native elemental gain multiplier")
 	if failures > 0:
 		quit(1)
 		return

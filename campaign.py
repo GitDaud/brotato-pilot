@@ -14,7 +14,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 RUN = ROOT / 'run'
 SAVE = Path.home() / 'AppData/Roaming/Brotato/76561198851811283/save_v3_1.json'
-PLAN = ['crazy', 'ranger', 'mutant', 'old', 'loud', 'lich', 'apprentice', 'chunky', 'explorer']
+PLAN = ['mage', 'crazy', 'ranger', 'mutant', 'old', 'loud', 'lich', 'apprentice', 'chunky', 'explorer']
 
 
 def read_json(path):
@@ -104,7 +104,7 @@ def main():
                          expected_branch=expected_branch, actual_branch=branch)
             return
         profile = 'brawler' if short_name == 'crazy' else 'ranged'
-        weapon = 'weapon_knife' if short_name == 'crazy' else 'weapon_smg'
+        weapon = 'weapon_taser' if short_name == 'mage' else ('weapon_knife' if short_name == 'crazy' else 'weapon_smg')
         (RUN / 'challenge.json').write_text(json.dumps(dict(
             enabled=True, difficulty=5, profile=profile, character=character,
             weapon=weapon)), encoding='utf-8')

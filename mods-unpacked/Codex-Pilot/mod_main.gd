@@ -98,6 +98,8 @@ func _ready():
 	if selected_character == "character_crazy":
 		policy.brawler = true
 		gun_profile = "crazy_knives"
+	if selected_character == "character_mage":
+		gun_profile = "mage_tasers"
 	policy.character = selected_character
 	var settings_file = File.new()
 	if settings_file.open(evidence + "/adaptation.json", File.READ) == OK:
@@ -133,7 +135,7 @@ func _ready():
 	button.text = "Codex Pilot ON / OFF"
 	button.connect("pressed", self, "toggle")
 	box.add_child(button)
-	record("loaded", {"version":"0.6.12-dev","profile":gun_profile,"development_speed":development_speed})
+	record("loaded", {"version":"0.6.13-dev","profile":gun_profile,"development_speed":development_speed})
 	verify_recovery()
 
 func toggle():
@@ -254,6 +256,7 @@ func select_element(scene, preferred):
 
 func stat_snapshot():
 	var stats = {}
+	stats["stat_elemental_damage"] = Utils.get_stat(Keys.generate_hash("stat_elemental_damage"), 0)
 	for key in ["stat_max_hp","stat_armor","stat_melee_damage","stat_ranged_damage","stat_percent_damage","stat_attack_speed","stat_lifesteal","stat_hp_regeneration","stat_speed","stat_dodge","stat_crit_chance","stat_range","stat_harvesting","stat_luck"]:
 		stats[key] = Utils.get_capped_stat(Keys.generate_hash(key), 0) if key == "stat_max_hp" else Utils.get_stat(Keys.generate_hash(key), 0)
 	stats["trees"] = RunData.get_player_effect(Keys.generate_hash("trees"),0)
@@ -286,7 +289,7 @@ func value_item(item, price = 0):
 		if effect.key == "stat_armor" and effect.value < 0 and stats.get("stat_armor",0) < max(2, RunData.current_wave * 0.6):
 			return -1000.0
 	var score = policy.score_effects(item.effects, stats, RunData.current_wave)
-	var damage_key = "stat_melee_damage" if policy.brawler else "stat_ranged_damage"
+	var damage_key = damage_stat()
 	var ranged_delta = 0.0
 	for effect in item.effects:
 		if effect.key == damage_key and effect.custom_key != "temp_stats_while_not_moving":
@@ -308,6 +311,12 @@ func value_item(item, price = 0):
 	return score
 
 func synergy_bonus(item_id, owned_ids = []):
+	if policy.character == "character_mage":
+		if item_id == "item_scared_sausage":
+			return 12.0 / (1.0 + owned_ids.count(item_id))
+		if item_id == "item_snake":
+			return 8.0 / (1.0 + owned_ids.count(item_id))
+		return 0.0
 	if policy.brawler:
 		return 0.0
 	# Additional pierces have diminishing benefit; do not pay the same bonus again.
@@ -326,6 +335,8 @@ func synergy_bonus(item_id, owned_ids = []):
 	return 0.0
 
 func weapon_value(item, weapons):
+	if policy.character == "character_mage":
+		return 150.0 + item.tier * 35.0 if item.weapon_id == "weapon_taser" else -1.0
 	if policy.brawler:
 		var melee_weapon = "weapon_knife" if selected_character == "character_crazy" else "weapon_fist"
 		return 150.0 + item.tier * 35.0 if item.weapon_id == melee_weapon else -1.0
@@ -394,10 +405,15 @@ func weapon_value(item, weapons):
 
 # Approximate unarmored direct DPS, only for comparing native shop investments.
 # Ignores spread, piercing, crit and shared attack speed; not a combat simulator.
+func damage_stat():
+	if policy.character == "character_mage":
+		return "stat_elemental_damage"
+	return "stat_melee_damage" if policy.brawler else "stat_ranged_damage"
+
 func base_gun_dps(weapon, ranged_damage):
 	var stats = weapon.stats
 	var hit = float(stats.damage)
-	var damage_key = "stat_melee_damage" if policy.brawler else "stat_ranged_damage"
+	var damage_key = damage_stat()
 	for scaling in stats.scaling_stats:
 		if scaling[0] == damage_key or scaling[0] == Keys.generate_hash(damage_key):
 			hit += ranged_damage * scaling[1]
@@ -427,16 +443,16 @@ func direct_gain_score(gain, baseline, stats):
 	return gain / max(0.1,baseline) * max(1.0,100.0+stats.get("stat_percent_damage",0)) * 0.9
 
 func ranged_damage_score(weapons, stats, delta):
-	var ranged = float(stats.get("stat_melee_damage" if policy.brawler else "stat_ranged_damage",0))
+	var ranged = float(stats.get(damage_stat(),0))
 	var baseline = loadout_dps(weapons,ranged)
 	if baseline <= 0.0:
-		return delta * policy.weights(stats,RunData.current_wave)["stat_melee_damage" if policy.brawler else "stat_ranged_damage"]
+		return delta * policy.weights(stats,RunData.current_wave)[damage_stat()]
 	return direct_gain_score(loadout_dps(weapons,ranged+delta)-baseline,baseline,stats)
 
 func marginal_weapon_score(item, weapons, stats, wave):
 	if weapons.size() < 6:
 		return weapon_value(item,weapons)
-	var ranged = float(stats.get("stat_melee_damage" if policy.brawler else "stat_ranged_damage",0))
+	var ranged = float(stats.get(damage_stat(),0))
 	var direct_merge_gain = -1.0
 	for owned in weapons:
 		if owned.my_id == item.my_id and owned.upgrades_into != null:
@@ -566,7 +582,7 @@ func shop(scene):
 			var merge_gain = -INF
 			for owned in weapons:
 				if RunData.can_combine(owned,0):
-					var gain = base_gun_dps(owned.upgrades_into,shop_stats.get("stat_melee_damage" if policy.brawler else "stat_ranged_damage",0))-2*base_gun_dps(owned,shop_stats.get("stat_melee_damage" if policy.brawler else "stat_ranged_damage",0))
+					var gain = base_gun_dps(owned.upgrades_into,shop_stats.get(damage_stat(),0))-2*base_gun_dps(owned,shop_stats.get(damage_stat(),0))
 					if gain > merge_gain:
 						merge_gain = gain
 						merge_weapon = owned
@@ -1003,7 +1019,7 @@ func report(scene):
 			state["hp"] = p.current_stats.health
 			state["max_hp"] = p.max_stats.health
 			state["position"] = [p.global_position.x,p.global_position.y]
-	state["strategy_version"] = "0.6.12-dev"
+	state["strategy_version"] = "0.6.13-dev"
 	state["profile"] = gun_profile
 	state["character"] = selected_character
 	state["run_id"] = recording_id
@@ -1130,7 +1146,7 @@ func _exit_tree():
 
 func analyze_run():
 	var analysis = policy.analyze(recent_combat, RunData.current_wave)
-	analysis["strategy_version"] = "0.6.12-dev"
+	analysis["strategy_version"] = "0.6.13-dev"
 	analysis["run_id"] = recording_id
 	analysis["gun_profile"] = gun_profile
 	analysis["character"] = selected_character
@@ -1310,6 +1326,13 @@ func verify_recovery():
 	boss_marker.free()
 	charmed_marker.free()
 	var checks = File.new()
+	policy.character = "character_mage"
+	policy.brawler = false
+	var mage_taser = load("res://weapons/ranged/taser/1/taser_data.tres")
+	passed = passed and damage_stat() == "stat_elemental_damage"
+	passed = passed and weapon_value(mage_taser,[]) > 0 and weapon_value(actual_smg,[]) < 0
+	passed = passed and base_gun_dps(mage_taser,10) > base_gun_dps(mage_taser,5)
+	passed = passed and ranged_damage_score([mage_taser],{"stat_elemental_damage":5},2) > 0
 	checks.open(evidence + "/revision-check.json",File.WRITE)
 	checks.store_string(JSON.print({"version":"0.5.25","passed":passed,"checks":["native early six SMG ranged2 vs HP9 and affordable tier1 upgrade DPS normalization","recovery gates","real defeat evidence","speed/attack/range floors","support upgrade at full slots","no extra support at open slots","incoming projectile collision","real wave16 shop budget regression","reroll purchase reserve / budget / iteration limits","early economy preserved","native shotgun/SMG slot caps and merge","sharp bullet synergy","avoid bounce damage loss for piercing trial","native slash resources","full warning sweep footprint / safe lane","rotated and offset slash transform","real sharp bullet plus triple bandana regression","duplicate synergy diminishing returns","warning escape before native active interval","already active slash stays dangerous","wall infeasible moves rejected","real lethal corner24/36 escape allowed","native barricade stationary armor excluded while moving","unconditional speed penalty retained","real four SMG empty-slot deadlock regression","temporary sixth SMG and later shotgun accepted","native full-loadout marginal upgrade valuation","early slot filling retains priority","real armor offer accepted / weaker marginal weapon rejected","unified item and weapon admission threshold","inside-threat fast escape vs deeper crossing duration","stationary and delayed activation contact fractions","real higher-tier offer admitted after lower-tier merge","shotgun pair-to-higher-tier purchase admitted","native bait extra7-8 enemies risk detected","native weird ghost forced-low-health risk detected","same-cell nearfield normal bodies retained independently","same-cell boss body and velocity retained independently","native separate boss list included","native charmed-enemy exclusion retained"]}))
 	checks.close()
