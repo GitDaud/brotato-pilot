@@ -59,6 +59,8 @@ func weights(stats, wave):
 		result["stat_max_hp"] += 0.3 # Native damage per 3 permanent HP.
 		result["stat_lifesteal"] = 0.0
 		result["stat_speed"] = 0.0
+		result["consumable_heal"] = 4.0
+		result["stat_range"] = 0.5 if stats.get("stat_range",0) < 60 else 0.06
 	if character == "character_explorer":
 		result["stat_percent_damage"] = 1.3
 	return result
@@ -84,6 +86,8 @@ func score_effects(effects, stats, wave):
 	for e in effects:
 		# Pilot continuously moves; a conditional stationary bonus is not active armor.
 		if e.custom_key == "temp_stats_while_not_moving":
+			continue
+		if character == "character_chunky" and e.key in ["stat_lifesteal", "stat_speed"]:
 			continue
 		if brawler and e.key == "stat_ranged_damage":
 			continue

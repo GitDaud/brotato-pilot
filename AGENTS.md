@@ -12,3 +12,5 @@
 Next character by explicit user direction: Crazy (character_crazy), feature/crazy-strategy. Mutant D5 verified and merged.
 
 Current user-selected next character: Mage (character_mage), feature/mage-strategy. Crazy D5 verified and merged.
+
+Current user-selected character: Chunky (character_chunky), feature/chunky-strategy. Mage D5 verified and merged.
