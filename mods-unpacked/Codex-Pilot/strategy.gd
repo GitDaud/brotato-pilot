@@ -38,8 +38,9 @@ func weights(stats, wave):
 	# Luck improves native loot and tier rolls; recovering negative luck matters.
 	result["stat_luck"] = (0.7 if wave < 12 else 0.3) * (1.5 if stats.get("stat_luck",0) < 0 else 1.0) * (1.0+min(0.5,stats.get("trees",0)*0.1))
 	if character == "character_old":
-		result["stat_speed"] = 4.0 if stats.get("stat_speed",0) < 15 else 0.3
-		result["stat_armor"] *= 1.2
+		result["stat_speed"] = 8.0 if stats.get("stat_speed",0) < 10 else 0.3
+		result["stat_armor"] *= 2.5 if stats.get("stat_armor",0) < armor_target else 1.0
+		result["stat_max_hp"] *= 1.5 if stats.get("stat_max_hp",0) < hp_target else 1.0
 	if character == "character_mage":
 		result["stat_ranged_damage"] = 0.0
 		result["stat_melee_damage"] = 0.0
@@ -250,10 +251,13 @@ func upgrade_score(effects, stats, wave, score):
 	return score
 
 func reroll_upgrade(effects, stats, wave, score, gold, cost, rolls, spent):
-	if character != "character_mutant" or rolls >= 2 or cost < 0:
+	if not character in ["character_mutant", "character_old"] or rolls >= 2 or cost < 0:
 		return false
 	if gold-cost < (30+wave*2 if wave < 8 else 80) or cost > max(5.0,gold*0.08) or spent+cost > max(8.0,gold*0.12):
 		return false
+	if character == "character_old":
+		# Keep useful offers; reroll only weak choices within the shared budget.
+		return score < 12.0
 	for effect in effects:
 		if effect.value <= 0:
 			continue

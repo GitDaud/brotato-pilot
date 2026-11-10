@@ -127,6 +127,11 @@ func _init():
 	check(policy.score_effects([{"key":"consumable_heal","value":1,"custom_key":""}],{},3) > 0.0, "chunky pickup healing valued")
 	policy.character = "character_old"
 	check(policy.weights({"stat_speed":-10},3)["stat_speed"] > policy.weights({"stat_speed":15},3)["stat_speed"], "old repairs native movement penalty")
+	policy.character = "character_old"
+	check(policy.weights({"stat_armor":0},6)["stat_armor"] > 20.524131, "old wave6 armor repair beats observed ranged offer")
+	check(policy.weights({"stat_speed":-6},3)["stat_speed"]*3 > 12.0, "old wave3 speed repair beats attack speed offer")
+	check(policy.reroll_upgrade([],{},9,8.1,200,5,0,0), "old weak wave9 dodge choice can reroll")
+	check(not policy.reroll_upgrade([],{},9,8.1,200,5,2,10), "old reroll bounded to two per wave")
 	if failures > 0:
 		quit(1)
 		return
