@@ -140,6 +140,10 @@ func _init():
 	check(policy.score_effects([{"key":"stat_speed","value":9,"custom_key":""}],{"stat_speed":9},11) < 42.937851, "old wave11 speed crossing target cannot beat ranged repair")
 	check(policy.score_effects([{"key":"stat_speed","value":3,"custom_key":""}],{"stat_speed":9},10) < 22.5, "old wave10 armor beats excess movement")
 	check(policy.score_effects([{"key":"stat_harvesting","value":4,"custom_key":""}],{"stat_harvesting":39,"stat_percent_damage":55},10) < 12.0, "old midgame harvest below40 still tapers")
+	policy.character = "character_lucky"
+	check(policy.score_effects([{"key":"stat_luck","value":4,"custom_key":""}],{"stat_luck":100,"stat_gains":{"stat_luck":1.25}},3) == 10.0, "lucky native luck multiplier valued")
+	check(policy.score_effects([{"key":"stat_luck","value":25,"custom_key":"dmg_when_death"}],{"stat_luck":100},3) == 0.0, "lucky proc scaling is not a flat luck grant")
+	check(policy.weights({"stat_attack_speed":-60},3)["stat_attack_speed"] > policy.weights({"stat_attack_speed":0},3)["stat_attack_speed"], "lucky attack speed recovery tapers")
 	if failures > 0:
 		quit(1)
 		return

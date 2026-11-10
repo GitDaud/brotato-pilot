@@ -37,6 +37,10 @@ func weights(stats, wave):
 		result["stat_range"] = 0.35 if stats.get("stat_range",0) < 0 else 0.08
 	# Luck improves native loot and tier rolls; recovering negative luck matters.
 	result["stat_luck"] = (0.7 if wave < 12 else 0.3) * (1.5 if stats.get("stat_luck",0) < 0 else 1.0) * (1.0+min(0.5,stats.get("trees",0)*0.1))
+	if character == "character_lucky":
+		result["stat_luck"] = 2.0 if stats.get("stat_luck",0) < 250 else 0.8
+		result["stat_attack_speed"] = 2.8 if stats.get("stat_attack_speed",0) < 0 else 1.2
+		result["consumable_heal"] = 2.0
 	if character == "character_old":
 		result["stat_percent_damage"] = 1.8 if stats.get("stat_percent_damage",0) < 30 else 0.9
 		result["stat_speed"] = 8.0 if stats.get("stat_speed",0) < 10 else 0.3
@@ -90,6 +94,8 @@ func score_effects(effects, stats, wave):
 	var scored_harvesting = float(stats.get("stat_harvesting",0))
 	for e in effects:
 		# Pilot continuously moves; a conditional stationary bonus is not active armor.
+		if character == "character_lucky" and e.custom_key in ["dmg_when_pickup_gold", "dmg_when_death"]:
+			continue # Luck-scaled proc damage is not a flat luck gain.
 		if e.custom_key == "temp_stats_while_not_moving":
 			continue
 		if character == "character_chunky" and e.key in ["stat_lifesteal", "stat_speed"]:

@@ -104,6 +104,8 @@ func _ready():
 		gun_profile = "chunky_shotguns"
 	if selected_character == "character_old":
 		gun_profile = "old_shotguns"
+	if selected_character == "character_lucky":
+		gun_profile = "lucky_slingshots"
 	policy.character = selected_character
 	var settings_file = File.new()
 	if settings_file.open(evidence + "/adaptation.json", File.READ) == OK:
@@ -139,7 +141,7 @@ func _ready():
 	button.text = "Codex Pilot ON / OFF"
 	button.connect("pressed", self, "toggle")
 	box.add_child(button)
-	record("loaded", {"version":"0.6.18-dev","profile":gun_profile,"development_speed":development_speed})
+	record("loaded", {"version":"0.6.19-dev","profile":gun_profile,"development_speed":development_speed})
 	verify_recovery()
 
 func toggle():
@@ -315,6 +317,10 @@ func value_item(item, price = 0):
 	return score
 
 func synergy_bonus(item_id, owned_ids = []):
+	if policy.character == "character_lucky":
+		if item_id in ["item_baby_elephant", "item_cyberball"]:
+			return 30.0 / (1.0 + owned_ids.count(item_id)*0.4)
+		return 0.0
 	if policy.character == "character_mage":
 		if item_id == "item_scared_sausage":
 			return 12.0 / (1.0 + owned_ids.count(item_id))
@@ -339,6 +345,8 @@ func synergy_bonus(item_id, owned_ids = []):
 	return 0.0
 
 func weapon_value(item, weapons):
+	if policy.character == "character_lucky":
+		return 160.0 + item.tier * 35.0 if item.weapon_id == "weapon_slingshot" else -1.0
 	if policy.character in ["character_chunky", "character_old"]:
 		return 175.0 + item.tier * 35.0 if item.weapon_id == "weapon_double_barrel_shotgun" else -1.0
 	if policy.character == "character_mage":
@@ -1025,7 +1033,7 @@ func report(scene):
 			state["hp"] = p.current_stats.health
 			state["max_hp"] = p.max_stats.health
 			state["position"] = [p.global_position.x,p.global_position.y]
-	state["strategy_version"] = "0.6.18-dev"
+	state["strategy_version"] = "0.6.19-dev"
 	state["profile"] = gun_profile
 	state["character"] = selected_character
 	state["run_id"] = recording_id
@@ -1152,7 +1160,7 @@ func _exit_tree():
 
 func analyze_run():
 	var analysis = policy.analyze(recent_combat, RunData.current_wave)
-	analysis["strategy_version"] = "0.6.18-dev"
+	analysis["strategy_version"] = "0.6.19-dev"
 	analysis["run_id"] = recording_id
 	analysis["gun_profile"] = gun_profile
 	analysis["character"] = selected_character
@@ -1335,6 +1343,11 @@ func verify_recovery():
 	policy.brawler = false
 	passed = passed and weapon_value(shotgun,[]) > 0 and weapon_value(actual_smg,[]) < 0
 	var checks = File.new()
+	policy.character = "character_lucky"
+	var lucky_sling = load("res://weapons/ranged/slingshot/1/slingshot_data.tres")
+	passed = passed and weapon_value(lucky_sling,[]) > 0 and weapon_value(actual_smg,[]) < 0
+	passed = passed and base_gun_dps(lucky_sling,10) > base_gun_dps(lucky_sling,5)
+	passed = passed and synergy_bonus("item_cyberball",[]) > synergy_bonus("item_cyberball",["item_cyberball"])
 	policy.character = "character_mage"
 	policy.brawler = false
 	var mage_taser = load("res://weapons/ranged/taser/1/taser_data.tres")
