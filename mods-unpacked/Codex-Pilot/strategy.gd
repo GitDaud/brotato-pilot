@@ -38,6 +38,7 @@ func weights(stats, wave):
 	# Luck improves native loot and tier rolls; recovering negative luck matters.
 	result["stat_luck"] = (0.7 if wave < 12 else 0.3) * (1.5 if stats.get("stat_luck",0) < 0 else 1.0) * (1.0+min(0.5,stats.get("trees",0)*0.1))
 	if character == "character_old":
+		result["stat_percent_damage"] = 1.8 if stats.get("stat_percent_damage",0) < 30 else 0.9
 		result["stat_speed"] = 8.0 if stats.get("stat_speed",0) < 10 else 0.3
 		result["stat_armor"] *= 2.5 if stats.get("stat_armor",0) < armor_target else 1.0
 		result["stat_max_hp"] *= 1.5 if stats.get("stat_max_hp",0) < hp_target else 1.0
@@ -99,7 +100,10 @@ func score_effects(effects, stats, wave):
 			continue
 		if e.key == "stat_harvesting":
 			# Future currency buys fewer stats when native shop prices are higher.
-			score += harvesting_return(scored_harvesting,e.value,wave,stats.get("harvesting_growth",5.0))*0.15/max(0.1,1.0+stats.get("items_price",0)/100.0)
+			var economy_weight = 0.15
+			if character == "character_old" and (scored_harvesting >= 40 or (wave >= 4 and stats.get("stat_percent_damage",0) < 20)):
+				economy_weight *= 0.25
+			score += harvesting_return(scored_harvesting,e.value,wave,stats.get("harvesting_growth",5.0))*economy_weight/max(0.1,1.0+stats.get("items_price",0)/100.0)
 			scored_harvesting += e.value
 			continue
 		var weight = w[e.key]
@@ -206,6 +210,8 @@ func should_restart(won, analyzed, recording_ended, elapsed):
 
 func breaks_floor(key, delta, stats, wave):
 	var floors = {"stat_speed": min(15.0, wave * 1.5), "stat_ranged_damage": max(0.0, wave - 3.0), "stat_attack_speed": 0.0, "stat_range": -20.0}
+	if character == "character_old" and wave >= 8:
+		floors["stat_percent_damage"] = 20.0
 	if brawler:
 		floors.erase("stat_ranged_damage")
 		floors["stat_melee_damage"] = max(0.0,wave-3.0)

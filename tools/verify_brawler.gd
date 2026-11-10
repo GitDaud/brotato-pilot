@@ -132,6 +132,10 @@ func _init():
 	check(policy.weights({"stat_speed":-6},3)["stat_speed"]*3 > 12.0, "old wave3 speed repair beats attack speed offer")
 	check(policy.reroll_upgrade([],{},9,8.1,200,5,0,0), "old weak wave9 dodge choice can reroll")
 	check(not policy.reroll_upgrade([],{},9,8.1,200,5,2,10), "old reroll bounded to two per wave")
+	policy.character = "character_old"
+	check(policy.breaks_floor("stat_percent_damage",-8,{"stat_percent_damage":22},11), "old rejects tractor damage loss below midgame floor")
+	check(not policy.breaks_floor("stat_percent_damage",-8,{"stat_percent_damage":40},11), "old can trade excess damage")
+	check(policy.score_effects([{"key":"stat_harvesting","value":2,"custom_key":""}],{"stat_harvesting":41,"stat_percent_damage":22},8) < 10.0, "old weak economy offer can reroll after economy foundation")
 	if failures > 0:
 		quit(1)
 		return
