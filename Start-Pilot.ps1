@@ -1,7 +1,9 @@
 param(
     [ValidateSet("ranged", "brawler")][string]$Profile = "ranged",
     [ValidateSet(1, 2, 4)][int]$Speed = 1,
-    [switch]$Record
+    [switch]$Record,
+    [switch]$Isolated,
+    [switch]$CaptureBackground
 )
 $ErrorActionPreference = 'Stop'
 if (Get-Process Brotato -ErrorAction SilentlyContinue) {
@@ -25,6 +27,8 @@ try {
         $env:SteamGameId = '1942280'
         $launchArgs = @('launch_background.py','--profile',$Profile,'--speed',$Speed)
         if ($Record) { $launchArgs += '--record' }
+        if ($Isolated) { $launchArgs += '--isolated' }
+        if ($CaptureBackground) { $launchArgs += '--capture-background' }
         python @launchArgs
         if ($LASTEXITCODE -ne 0) { throw 'Background launch failed.' }
     } finally {

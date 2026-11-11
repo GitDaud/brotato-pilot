@@ -2,7 +2,9 @@
 
 这是已有 Windows 本机自动玩家项目的源码快照。远程策略历史实战版本为 0.5.25，斗士最新实战版本为 0.6.3-dev。manifest.json 的版本字段仍为历史值 0.5.0。
 
-Latest progress: Generalist cleared native Danger 5. All 10 qualifying clears verified; native Danger 6 (Nightmare) is unlocked (max_selectable_difficulty=6). Character branches merged only after settlement/save verification. Campaign complete; no automatic Danger 6 launch. Original speed, recording off. See docs/generalist-danger5.md.
+Latest progress: Well Rounded cleared native Danger 6 with six sticks at 1x speed, seed 2026111106, zero retries (0.6.45-dev). Version 0.6.46-dev strengthens melee boss pursuit and in-range aiming; the same-equipment wave-20 practice killed both bosses in 46.01 seconds, about 44 seconds before the original deadline. See [Danger 6 strategy and validation](docs/well-rounded-danger6.md). No automatic character progression; recording remains opt-in.
+
+Use `./Start-SeededTrial.ps1` for a new seeded Danger 6 run. Add `-Wave 20 -SourceRunId '<your-reached-run-id>'` to replay an existing local checkpoint. Add `-WindowCapture` for the verified background 1080p60 capture path; first build the local window guard with `./Build-CaptureGuard.ps1` and a Zig C compiler. Checkpoints, native save files, recordings, game resources and compiled dependencies are local artifacts and are not included in this source repository. Launch scripts and game paths currently target the author's Windows installation.
 
 ### 角色开发分支
 
@@ -375,3 +377,5 @@ record_run.py通过已知游戏PID枚举核验可见HWND，FFmpeg gfxcapture仅�
 
 
 游侠攻略交叉核对与下一版采购调整见 [危险 5 复盘](docs/ranger-danger5.md)。0.6.6 新增护甲紧缺评分、清群武器选择、手枪替换和最后商店预算处理；纯策略检查、编译及新进程原生资源自检通过。异变体本局在第 17 波失败后，已返回游侠危险 5 复测；采购行为和通关效果仍待实战确认。
+
+2026-11-12 / 全能者危险 6 原生通关：0.6.45-dev，固定种子 2026111106，六木棍从第 1 波零重试通过第 20 波；原生噩梦胜利截图和存档 difficulty_value=6 / wave_number=20 / retries=0 均已核验，难度倍率保持 1。1 倍速、不录视频，游戏停在结算。新增固定种子启动与已到达波次的原生检查点重打，练习单独标记、不冒充从头通关；详细攻略依据、失败试验和证据见 [全能者危险 6 复盘](docs/well-rounded-danger6.md)。单局胜利不代表稳定胜率。

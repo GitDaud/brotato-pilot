@@ -1,10 +1,16 @@
 extends Node
 
 var policy = preload("res://mods-unpacked/Codex-Pilot/strategy.gd").new()
+var seeded = preload("res://mods-unpacked/Codex-Pilot/seeded_debug.gd").new(self)
+var practice_hold = false
 var boss_model = preload("res://mods-unpacked/Codex-Pilot/boss_model.gd").new()
 var focused_boss_id = 0
+var focused_threat_id = 0
 var boss_warnings = []
 var next_boss_report = 0.0
+var next_boss_health_report = 0.0
+var boss_wave_started = -1.0
+var observed_wave_time_left = 0.0
 var orbit_segments_count = 0
 var healing_totals = {}
 var enabled = true
@@ -55,6 +61,7 @@ var forecast_msec = 0
 var forecast_player_position = Vector2.ZERO
 var recording_id = ""
 var recording_enabled = false
+var private_recording = false
 var selected_character = "character_well_rounded"
 var selected_weapon = "weapon_smg"
 var recording_ended = false
@@ -70,6 +77,7 @@ func _init():
 	ModLoaderMod.install_script_extension("res://mods-unpacked/Codex-Pilot/extensions/movement.gd")
 	ModLoaderMod.install_script_extension("res://mods-unpacked/Codex-Pilot/extensions/pause_menu.gd")
 	ModLoaderMod.install_script_extension("res://mods-unpacked/Codex-Pilot/extensions/main.gd")
+	ModLoaderMod.install_script_extension("res://mods-unpacked/Codex-Pilot/extensions/item_service.gd")
 
 func _ready():
 	normal_physics_hz = Engine.iterations_per_second
@@ -80,6 +88,12 @@ func _ready():
 				development_speed = requested
 		if argument == "--pilot-record=1":
 			recording_enabled = true
+		if argument == "--pilot-private-record=1":
+			private_recording = true
+	if private_recording:
+		var video_capture = preload("res://mods-unpacked/Codex-Pilot/private_video.gd").new()
+		video_capture.pilot = self
+		add_child(video_capture)
 	if "--pilot-profile=brawler" in OS.get_cmdline_args():
 		gun_profile = "brawler_fists"
 		policy.brawler = true
@@ -92,9 +106,11 @@ func _ready():
 		var challenge = parse_json(challenge_file.get_as_text())
 		challenge_file.close()
 		if challenge is Dictionary and challenge.get("enabled", false):
-			challenge_difficulty = int(clamp(challenge.get("difficulty", 1), 0, 5))
+			challenge_difficulty = int(clamp(challenge.get("difficulty", 1), 0, 6))
 			selected_character = str(challenge.get("character",selected_character))
 			selected_weapon = str(challenge.get("weapon",selected_weapon))
+			seeded.configure(challenge)
+			practice_hold = bool(challenge.get("practice_hold",false))
 	if selected_character == "character_crazy":
 		policy.brawler = true
 		gun_profile = "crazy_knives"
@@ -143,8 +159,17 @@ func _ready():
 	button.text = "Codex Pilot ON / OFF"
 	button.connect("pressed", self, "toggle")
 	box.add_child(button)
-	record("loaded", {"version":"0.6.23-dev","profile":gun_profile,"development_speed":development_speed})
 	verify_recovery()
+	policy.nightmare = challenge_difficulty == 6 and selected_character == "character_well_rounded"
+	if policy.nightmare:
+		policy.body_horizon = 0.45
+		gun_profile = "nightmare_shotguns"
+		if selected_weapon == "weapon_slingshot":
+			gun_profile = "nightmare_slingshots"
+		if selected_weapon == "weapon_stick":
+			gun_profile = "nightmare_sticks"
+			policy.brawler = true
+	record("loaded", {"version":"0.6.46-dev","profile":gun_profile,"development_speed":development_speed})
 
 func toggle():
 	enabled = not enabled
@@ -187,8 +212,10 @@ func _process(delta):
 	if clock >= next_report:
 		next_report = clock + 1.0
 		report(scene)
+	if seeded.process_command(scene):
+		return
 	if finished:
-		decision = "Run complete - controller authorization required"
+		decision = "Practice wave cleared - stopped" if seeded.wave_cleared else "Run complete - stopped"
 		return
 	if not enabled or scene_age < 1.5 or clock < next_action:
 		return
@@ -210,13 +237,23 @@ func _process(delta):
 		if not scene.difficulty_selected:
 			select_element(scene, "difficulty_" + str(challenge_difficulty if challenge_difficulty >= 0 else 0))
 	elif scene.filename.ends_with("/shop.tscn"):
+		if seeded.wave_only and seeded.replay_wave > 0 and RunData.current_wave == seeded.replay_wave:
+			seeded.wave_cleared = true
+			finished = true
+			decision = "Practice wave cleared - stopped in shop"
+			save_image("settlement.png")
+			analyze_run()
+			return
 		shop(scene)
 	elif scene is TitleScreen:
+		if seeded.restore_checkpoint():
+			return
 		if not policy.brawler and challenge_difficulty < 0 and ProgressData.saved_run_state.has_run_state and ProgressData.check_dlc_valid_for_saved_run_state():
 			decision = "Continue saved run"
 			scene._main_menu._on_ContinueButton_pressed()
 		else:
 			decision = "Start new run"
+			seeded.apply_scope("new_run",0)
 			scene._main_menu._on_StartButton_pressed()
 	elif scene.has_method("_on_StartButton_pressed"):
 		decision = "Start new run"
@@ -226,6 +263,9 @@ func _process(delta):
 		if scene.has_node("EntitySpawner"):
 			var retry = scene.get("_retry_wave")
 			if is_instance_valid(retry) and retry.is_visible_in_tree():
+				if seeded.fixed_seed >= 0 and practice_hold:
+					decision = "Defeated - waiting for practice retry command"
+					return
 				decision = "Defeated - end run without retry"
 				record("defeat", {"wave":RunData.current_wave})
 				save_image("defeat.png")
@@ -260,6 +300,8 @@ func select_element(scene, preferred):
 	if selected != null:
 		decision = "Select " + selected.item.my_id
 		record("select", {"id":selected.item.my_id})
+		if scene is DifficultySelection:
+			seeded.apply_scope("difficulty",0)
 		scene._on_element_pressed(selected, 0)
 
 func stat_snapshot():
@@ -292,7 +334,12 @@ func value_item(item, price = 0):
 	for effect in item.effects:
 		if effect.key == "hp_cap":
 			return -1000.0
-		if effect.value < 0 and policy.breaks_floor(effect.key, effect.value*stats.stat_gains.get(effect.key,1.0), stats, RunData.current_wave):
+		if policy.nightmare and effect.value > 0 and effect.key in ["number_of_enemies","enemy_speed","enemy_health","enemy_damage"]:
+			return -1000.0
+		var first_pierce = policy.nightmare and item.my_id in ["item_sharp_bullet","item_bandana"] and RunData.get_player_effect(Keys.generate_hash("piercing"),0) == 0
+		var control_speed_trade = policy.nightmare and item.my_id in ["item_ugly_tooth","item_snail"] and effect.key == "stat_speed" and stats.get("stat_speed",0)+effect.value >= 5
+		var candle_trade = policy.nightmare and item.my_id == "item_candle" and effect.key == "stat_percent_damage" and stats.get("stat_percent_damage",0)+effect.value >= 0
+		if effect.value < 0 and not control_speed_trade and not candle_trade and not (first_pierce and effect.key == "stat_percent_damage") and policy.breaks_floor(effect.key, effect.value*stats.stat_gains.get(effect.key,1.0), stats, RunData.current_wave):
 			return -1000.0
 		if effect.key == "stat_armor" and effect.value < 0 and stats.get("stat_armor",0) < max(2, RunData.current_wave * 0.6):
 			return -1000.0
@@ -323,6 +370,12 @@ func value_item(item, price = 0):
 	return score
 
 func synergy_bonus(item_id, owned_ids = []):
+	if policy.nightmare and item_id == "item_ugly_tooth":
+		return 100.0 if not item_id in owned_ids else 0.0
+	if policy.nightmare and item_id == "item_tardigrade":
+		return 110.0/(1.0+owned_ids.count(item_id)*0.5)
+	if gun_profile == "nightmare_shotguns" and item_id in ["item_sharp_bullet","item_bandana"]:
+		return 8.0/(1.0+owned_ids.count(item_id)) # Shotguns already pierce natively.
 	if policy.character == "character_lucky":
 		if item_id in ["item_baby_elephant", "item_cyberball"]:
 			return 30.0 / (1.0 + owned_ids.count(item_id)*0.4)
@@ -345,12 +398,21 @@ func synergy_bonus(item_id, owned_ids = []):
 	if item_id == "item_baby_with_a_beard":
 		return 15.0 if item_id in owned_ids else 45.0
 	if item_id == "item_ricochet":
-		return -1000.0 if gun_profile == "smg_shotgun" else 45.0
-	if item_id == "item_pumpkin" and gun_profile == "smg_shotgun":
+		return -1000.0 if gun_profile in ["smg_shotgun","smg_shredder","nightmare_shotguns"] else 45.0
+	if item_id == "item_pumpkin" and gun_profile in ["smg_shotgun","smg_shredder","nightmare_shotguns"]:
 		return 18.0 / (1 + owned_ids.count(item_id))
 	return 0.0
 
 func weapon_value(item, weapons):
+	if gun_profile == "nightmare_sticks":
+		return 175.0+item.tier*35.0 if item.weapon_id == "weapon_stick" else -1.0
+	if gun_profile == "nightmare_slingshots":
+		return 175.0+item.tier*35.0 if item.weapon_id == "weapon_slingshot" else -1.0
+	if gun_profile == "nightmare_shotguns":
+		if item.weapon_id == "weapon_double_barrel_shotgun":
+			return 175.0+item.tier*35.0
+		# Fill empty slots when a shotgun is unavailable, then replace normally.
+		return 80.0+item.tier*10.0 if item.weapon_id == "weapon_smg" and weapons.size() < 6 else -1.0
 	if policy.character == "character_generalist":
 		if not item.weapon_id in ["weapon_spear", "weapon_stick", "weapon_fist", "weapon_jousting_lance", "weapon_cacti_club", "weapon_scissors", "weapon_chopper", "weapon_double_barrel_shotgun", "weapon_smg"]:
 			return -1.0
@@ -391,8 +453,9 @@ func weapon_value(item, weapons):
 				if owned.my_id == item.my_id and item.upgrades_into != null:
 					support_match = true
 		return 175.0 + item.tier * 35.0 if support_count == 0 or (support_count == 1 and weapons.size() >= 6 and support_match) else -1.0
-	if gun_profile == "smg_shotgun":
-		var caps = {"weapon_smg":4,"weapon_double_barrel_shotgun":2}
+	if gun_profile in ["smg_shotgun","smg_shredder"]:
+		var support_gun = "weapon_shredder" if gun_profile == "smg_shredder" else "weapon_double_barrel_shotgun"
+		var caps = {"weapon_smg":4,support_gun:2}
 		if not caps.has(item.weapon_id):
 			return -1.0
 		var count = 0
@@ -419,7 +482,7 @@ func weapon_value(item, weapons):
 		var temporary_smg = item.weapon_id == "weapon_smg" and (weapons.size() < 6 or has_starter_pistol)
 		if count >= caps[item.weapon_id] and not temporary_smg and not (weapons.size() >= 6 and matching):
 			return -1.0
-		return (175.0 if item.weapon_id == "weapon_double_barrel_shotgun" else 150.0) + item.tier * 35.0
+		return (175.0 if item.weapon_id == support_gun else 150.0) + item.tier * 35.0
 
 	if item.weapon_id == "weapon_smg":
 		return 150.0 + item.tier * 35.0
@@ -448,6 +511,14 @@ func damage_stat():
 func base_gun_dps(weapon, ranged_damage):
 	var stats = weapon.stats
 	var hit = float(stats.damage)
+	if policy.nightmare and weapon.weapon_id == "weapon_stick":
+		var stick_count = 0
+		for owned in RunData.get_player_weapons(0):
+			if owned.weapon_id == "weapon_stick":
+				stick_count += 1
+		for effect in weapon.effects:
+			if effect is WeaponStackEffect and effect.stat_name == "damage":
+				hit += effect.value*max(0,stick_count-1)
 	var damage_key = damage_stat()
 	if policy.character == "character_generalist" and weapon.type == 0:
 		damage_key = "stat_melee_damage"
@@ -457,6 +528,10 @@ func base_gun_dps(weapon, ranged_damage):
 			hit += ranged_damage * scaling[1]
 	var duration = stats.get_base_cooldown_value(stats,1.0)
 	var hits = 1 if weapon.type == 0 else stats.nb_projectiles
+	if policy.nightmare and weapon.weapon_id == "weapon_slingshot":
+		# Estimate useful bounce hits for tier decisions. Each can miss, so
+		# discount rather than treating every listed bounce as guaranteed DPS.
+		hits *= 1.0+0.7*stats.bounce
 	return max(1.0,hit) * hits / max(0.05,duration)
 
 # Normalize direct attack gains to the existing percent-damage utility.
@@ -468,12 +543,13 @@ func loadout_dps(weapons, ranged):
 	return total
 
 func ranger_replacement(item, weapons, stats):
-	if policy.character != "character_ranger" or weapons.size() != 6 or not item.weapon_id in ["weapon_smg","weapon_double_barrel_shotgun","weapon_shredder"]:
+	var replace_smg = gun_profile == "nightmare_shotguns" and item.weapon_id == "weapon_double_barrel_shotgun"
+	if (policy.character != "character_ranger" and not replace_smg) or weapons.size() != 6 or not item.weapon_id in ["weapon_smg","weapon_double_barrel_shotgun","weapon_shredder"]:
 		return null
 	var ranged = float(stats.get("stat_ranged_damage",0))
 	for owned in weapons:
 		# Require a real direct-DPS improvement, not only a fixed support bonus.
-		if owned.weapon_id == "weapon_pistol" and base_gun_dps(item,ranged) > base_gun_dps(owned,ranged)*1.25:
+		if (owned.weapon_id == "weapon_pistol" or (replace_smg and owned.weapon_id == "weapon_smg")) and base_gun_dps(item,ranged) > base_gun_dps(owned,ranged)*1.25:
 			return owned
 	return null
 
@@ -485,7 +561,10 @@ func ranged_damage_score(weapons, stats, delta):
 	var baseline = loadout_dps(weapons,ranged)
 	if baseline <= 0.0:
 		return delta * policy.weights(stats,RunData.current_wave)[damage_stat()]
-	return direct_gain_score(loadout_dps(weapons,ranged+delta)-baseline,baseline,stats)
+	var score = direct_gain_score(loadout_dps(weapons,ranged+delta)-baseline,baseline,stats)
+	if policy.nightmare and not policy.brawler and delta > 0.0 and ranged < min(20,4+RunData.current_wave):
+		return max(score*1.5,delta*12.0)
+	return score
 
 func marginal_weapon_score(item, weapons, stats, wave):
 	if weapons.size() < 6:
@@ -632,7 +711,7 @@ func shop(scene):
 				# Native recycling refreshes the shop controls. Reacquire the offer.
 				for offer in scene._get_shop_items_container(0)._shop_items:
 					if is_instance_valid(offer) and offer.active and offer.item_data.my_id == planned_id and offer.value <= RunData.get_player_currency(0) and scene._get_shop_items_container(0)._can_weapon_be_bought(offer):
-						record("buy",{"id":planned_id,"cost":offer.value,"reason":"committed_pistol_replacement"})
+						record("buy",{"id":planned_id,"cost":offer.value,"reason":"committed_weapon_replacement"})
 						offer._on_BuyButton_pressed()
 						return
 				record("replacement_offer_unavailable",{"id":planned_id})
@@ -714,6 +793,13 @@ func danger_path(pos, velocity, threats):
 		var active_to = min(0.65, threat[5]) if threat.size() > 5 else 0.65
 		if active_to < active_from:
 			continue
+		if policy.nightmare and active_from < 0.16:
+			# Receding-horizon safety: several distant possible collisions must not
+			# outweigh an impact in the next few physics ticks.
+			var immediate_to = min(0.16,active_to)
+			var immediate_fraction = contact_fraction(offset,relative_velocity,threat[1],active_from,immediate_to)
+			risk += 300000.0 * immediate_fraction
+			risk += 20.0 * policy.new_contact_penalty(offset,relative_velocity,threat[1],active_from,immediate_to,immediate_fraction)
 		var t = clamp(-offset.dot(relative_velocity) / max(1.0, relative_velocity.length_squared()), active_from, active_to)
 		var distance_squared = (offset + relative_velocity * t).length_squared()
 		var radius = threat[1]
@@ -814,15 +900,21 @@ func on_native_player_hit(player, value, _knockback, _crit, dodged, protected, _
 	if is_instance_valid(args.hitbox):
 		details["hitbox_path"] = str(args.hitbox.get_path())
 		details["hitbox_position"] = [args.hitbox.global_position.x,args.hitbox.global_position.y]
+		var projectile = args.hitbox.get_parent()
+		if projectile is Projectile:
+			details["projectile_scene"] = projectile.filename
+			details["projectile_velocity"] = [projectile.velocity.x,projectile.velocity.y]
+			details["projectile_sinusoidal_offset"] = [projectile.sinusoidal_offset.x,projectile.sinusoidal_offset.y]
+			details["projectile_animation_time"] = projectile._animation_player.current_animation_position
 	record("native_player_hit",details)
 
-func add_body_threat(cells, bosses, point, pos, velocity, is_boss):
+func add_body_threat(cells, bosses, point, pos, velocity, is_boss, radius = 72.0):
 	# Preserve individual collision geometry in the immediate body-contact region.
 	if is_boss or pos.distance_squared_to(point) <= 180.0 * 180.0:
 		if pos.distance_squared_to(point) <= 420.0 * 420.0:
-			bosses.append([point,72.0,1,velocity,0.0,0.65 if is_boss else policy.body_horizon])
+			bosses.append([point,radius,1,velocity,0.0,0.65 if is_boss else policy.body_horizon])
 	else:
-		add_threat(cells,point,pos,72.0,false,velocity)
+		add_threat(cells,point,pos,radius,false,velocity)
 
 func threat_units(spawner):
 	# Native enemies excludes the separate bosses list (elites are bosses too).
@@ -839,10 +931,35 @@ func enemy_priority(enemy):
 		return -1
 	var spawning = enemy._current_attack_behavior is SpawningAttackBehavior
 	var shooting = enemy._current_attack_behavior is ShootingAttackBehavior
+	if policy.nightmare and policy.brawler and enemy is Boss:
+		return 9 # Finish the final bosses; support must not continually divert pursuit.
+	if policy.nightmare and enemy.enemy_id in ["buffer","corrupted_buffer"]:
+		return 8 # Native buffs permanently increase nearby enemies' HP and speed.
+	if policy.nightmare and enemy is Healer:
+		return 7
+	if policy.nightmare and shooting and not enemy is Boss:
+		return 6
 	return policy.target_priority(enemy is Boss, enemy is Healer or enemy is Buffer, spawning, shooting)
 
 func is_emergency_target(enemy, player_position, player_velocity):
-	return is_instance_valid(enemy) and enemy is Enemy and not enemy is Boss and not enemy.dead and enemy.get_charmed_by_player_index() < 0 and policy.imminent_contact(enemy.global_position-player_position,enemy._integrate_forces_velocity-player_velocity)
+	if not is_instance_valid(enemy) or not enemy is Enemy or enemy is Boss or enemy.dead or enemy.get_charmed_by_player_index() >= 0:
+		return false
+	var offset = enemy.global_position-player_position
+	var enemy_velocity = enemy._integrate_forces_velocity
+	var relative_velocity = enemy_velocity-player_velocity
+	if policy.nightmare and offset.length_squared() <= 300.0*300.0 and offset.dot(relative_velocity) < 0.0 and enemy_velocity.length() >= max(350.0,player_velocity.length()*0.95):
+		# Fast nightmare pursuers need several volleys before body contact.
+		if enemy.enemy_id == "fin_alien":
+			return true
+		var contact_time = clamp(-offset.dot(relative_velocity)/max(1.0,relative_velocity.length_squared()),0.0,0.9)
+		if (offset+relative_velocity*contact_time).length_squared() <= 120.0*120.0:
+			return true
+	return policy.imminent_contact(offset,relative_velocity)
+
+func emergency_target_priority(enemy):
+	if not policy.nightmare:
+		return 6
+	return 11 if enemy.enemy_id == "fin_alien" else 10
 
 func priority_target(targets, origin, min_range, max_range, player_position = null, player_velocity = Vector2.ZERO):
 	var best = [null,INF]
@@ -855,9 +972,17 @@ func priority_target(targets, origin, min_range, max_range, player_position = nu
 		var distance = origin.distance_to(enemy.global_position)
 		if distance <= min_range or distance > max_range:
 			continue
+		if policy.nightmare and player_position == null and priority >= 6 and distance > 700.0:
+			priority = 3 # Do not cross the arena just to chase remote support.
 		if player_position != null and is_emergency_target(enemy,player_position,player_velocity):
-			priority = 6 # Only weapon aim: clear imminent body contact, then resume boss.
+			priority = emergency_target_priority(enemy)
 		var cost = distance
+		if policy.nightmare and player_position != null and priority >= 6:
+			# Coordinate all weapons from the player's origin and finish a damaged
+			# pursuer instead of spreading six attacks across several nearby bodies.
+			cost = player_position.distance_to(enemy.global_position)+180.0*clamp(float(enemy.current_stats.health)/max(1.0,enemy.max_stats.health),0.0,1.0)
+			if enemy.get_instance_id() == focused_threat_id:
+				cost -= 140.0
 		if enemy is Boss:
 			var warning = charge_warning(enemy)
 			cost = boss_model.focus_cost(distance,float(enemy.current_stats.health)/max(1.0,enemy.max_stats.health),not warning.empty(),enemy.get_instance_id()==focused_boss_id)
@@ -865,6 +990,8 @@ func priority_target(targets, origin, min_range, max_range, player_position = nu
 			best = [enemy,distance]
 			best_priority = priority
 			best_cost = cost
+	if policy.nightmare and player_position != null and best[0] != null and best_priority >= 6:
+		focused_threat_id = best[0].get_instance_id()
 	return best
 
 func charge_warning(enemy):
@@ -885,7 +1012,9 @@ func charge_warning(enemy):
 	var axis = behavior._charge_direction
 	if not preparing and not charging or behavior.target_calculation_timing != 0:
 		axis = enemy.current_target.global_position-enemy.global_position if enemy.current_target != null else Vector2.ZERO
-	return {"id":enemy.enemy_id,"delay":delay,"direction":axis,"speed":behavior.charge_speed*RunData.current_run_accessibility_settings.speed,"duration":behavior._unlock_move_timer.time_left if charging else behavior.charge_duration,"phase":"charge" if charging else ("windup" if preparing else "cooldown")}
+	# Native shoot() adds the charge bonus to the enemy's ordinary move speed.
+	var charge_speed = enemy.get_move_speed() if charging else max(0.0,enemy.current_stats.speed+enemy.decaying_bonus_speed+behavior.charge_speed*RunData.current_run_accessibility_settings.speed)
+	return {"id":enemy.enemy_id,"delay":delay,"direction":axis,"speed":charge_speed,"duration":behavior._unlock_move_timer.time_left if charging else behavior.charge_duration,"phase":"charge" if charging else ("windup" if preparing else "cooldown")}
 
 func observe_weapon_target(target, weapon_id, emergency = false):
 	if target[0] == null or clock < next_aim_report:
@@ -893,7 +1022,12 @@ func observe_weapon_target(target, weapon_id, emergency = false):
 	next_aim_report = clock + 1.0
 	var enemy = target[0]
 	var id = enemy.filename if enemy is Neutral else enemy.enemy_id
-	record("weapon_target", {"id":id,"priority":6 if emergency else enemy_priority(enemy),"emergency_contact":emergency,"distance":target[1],"weapon":weapon_id})
+	record("weapon_target", {"id":id,"priority":emergency_target_priority(enemy) if emergency else enemy_priority(enemy),"emergency_contact":emergency,"distance":target[1],"weapon":weapon_id})
+
+func on_native_boss_died(enemy, args):
+	# Main's earlier death handler can shorten the timer to .1 on the final kill.
+	# Keep the last physics sample as well as the native cleanup/killing-blow flags.
+	record("boss_death",{"id":enemy.enemy_id,"instance_id":enemy.get_instance_id(),"health":enemy.current_stats.health,"cleaning_up":args.cleaning_up,"enemy_killed_by_player":args.enemy_killed_by_player,"killing_blow":args.killing_blow_dmg_value,"wave":RunData.current_wave,"wave_elapsed":clock-boss_wave_started,"time_left_previous_physics":observed_wave_time_left})
 
 func steer(player):
 	if is_instance_valid(player) and not player.is_connected("took_damage",self,"on_native_player_hit"):
@@ -901,7 +1035,7 @@ func steer(player):
 	if finished or not is_instance_valid(player) or player.dead:
 		return Vector2.ZERO
 	var frame = Engine.get_physics_frames()
-	if cached_frame >= 0 and frame - cached_frame < 4:
+	if cached_frame >= 0 and frame - cached_frame < (1 if policy.nightmare else 4):
 		return direction
 	cached_frame = frame
 	var current_hp = player.current_stats.health
@@ -915,6 +1049,11 @@ func steer(player):
 	if scene == null or not scene.has_node("EntitySpawner"):
 		return Vector2.ZERO
 	var spawner = scene.get_node("EntitySpawner")
+	if boss_wave_started < 0.0 or previous_wave != RunData.current_wave:
+		boss_wave_started = clock
+	var wave_timer = scene.get_node_or_null("WaveTimer")
+	if wave_timer != null:
+		observed_wave_time_left = wave_timer.time_left
 	var pos = player.global_position
 	var bounds = ZoneService.get_current_zone_rect().grow(-45)
 	var cells = {}
@@ -942,8 +1081,13 @@ func steer(player):
 	body_forecasts = {}
 	forecast_msec = OS.get_ticks_msec()
 	forecast_player_position = pos
+	var player_collision = player.get_node_or_null("Hurtbox/Collision")
+	var player_collision_offset = player_collision.global_position-pos if player_collision is CollisionShape2D else Vector2.ZERO
+	var player_collision_radius = player_collision.shape.radius*max(player_collision.global_scale.x,player_collision.global_scale.y) if player_collision is CollisionShape2D and player_collision.shape is CircleShape2D else 24.0
 	for enemy in threat_units(spawner):
 		if is_instance_valid(enemy) and not enemy.dead:
+			if enemy is Boss and not enemy.is_connected("died",self,"on_native_boss_died"):
+				enemy.connect("died",self,"on_native_boss_died")
 			# Ordinary chargers share the native behavior with charging bosses.
 			var warning = charge_warning(enemy)
 			if not warning.empty():
@@ -953,6 +1097,8 @@ func steer(player):
 				if enemy is Boss or pos.distance_squared_to(enemy.global_position) <= 600.0*600.0:
 					boss_warnings.append({"id":warning.id,"phase":warning.phase,"delay":warning.delay,"direction":[warning.direction.x,warning.direction.y]})
 			if enemy is Boss:
+				if clock >= next_boss_health_report:
+					record("boss_health",{"id":enemy.enemy_id,"instance_id":enemy.get_instance_id(),"health":enemy.current_stats.health,"max_health":enemy.max_stats.health,"distance":pos.distance_to(enemy.global_position),"focused":focused_boss_id==enemy.get_instance_id(),"attack_reach":attack_reach,"player_hp":current_hp,"time_left":observed_wave_time_left,"wave_elapsed":clock-boss_wave_started})
 				for attached in enemy._all_additional_projectiles:
 					if not is_instance_valid(attached) or not attached is EnemyProjectileRotating or not attached.is_visible_in_tree() or attached._enable_stop_delay:
 						continue
@@ -973,8 +1119,21 @@ func steer(player):
 				body_forecasts[enemy.get_instance_id()] = [enemy.global_position,enemy._integrate_forces_velocity]
 			if enemy is Boss and pos.distance_squared_to(enemy.global_position) <= 420.0 * 420.0:
 				nearby_bosses += 1
-			add_body_threat(cells, boss_threats, enemy.global_position, pos, enemy._integrate_forces_velocity, enemy is Boss)
+			var body_point = enemy.global_position
+			var body_radius = 72.0
+			if policy.nightmare:
+				var collision = enemy.get_node_or_null("Hitbox/Collision")
+				if collision is CollisionShape2D and collision.shape is CircleShape2D:
+					body_point = collision.global_position-player_collision_offset
+					body_radius = max(40.0,collision.shape.radius*max(collision.global_scale.x,collision.global_scale.y)+player_collision_radius+12.0)
+			# An active linear charge is already represented by its swept body.
+			# Counting it twice can make a safe side-step lose to unrelated risks.
+			if not (policy.nightmare and not warning.empty() and warning.phase == "charge"):
+				add_body_threat(cells, boss_threats, body_point, pos, enemy._integrate_forces_velocity, enemy is Boss, body_radius)
+	if clock >= next_boss_health_report:
+		next_boss_health_report = clock+1.0
 	var slash_threats = []
+	var bullet_threats = []
 	slash_zones = 0
 	var projectiles = scene.get("_enemy_projectiles")
 	if is_instance_valid(projectiles):
@@ -984,13 +1143,32 @@ func steer(player):
 					# Warning lasts until .48s; damaging sweep .48-.60s.
 					if p._animation_player.current_animation_position <= 0.6:
 						for segment in slash_footprint(p._hitbox.global_transform, p._animation_player.current_animation_position):
-							if pos.distance_squared_to(segment[0]) < 480.0 * 480.0:
+							segment[3] = p.velocity + p.sinusoidal_offset
+							var slash_relative = segment[3]-player._integrate_forces_velocity
+							var slash_offset = segment[0]-pos
+							var slash_time = clamp(-slash_offset.dot(slash_relative)/max(1.0,slash_relative.length_squared()),segment[4],segment[5])
+							if (slash_offset+slash_relative*slash_time).length_squared() < 480.0 * 480.0:
 								slash_threats.append(segment)
 								slash_zones += 1
 					continue
-				# Keep ordinary bullets separate from enemy cells.
-				add_threat(cells, p.global_position, pos, 58.0, true, p.velocity)
-	var threats = cells.values() + boss_threats + slash_threats
+				if policy.nightmare:
+					# Different bullets in one grid cell can cross from opposite sides.
+					# Native nightmare bullets also add a sinusoidal velocity offset.
+					var bullet_velocity = p.velocity + p.sinusoidal_offset
+					var relative_velocity = bullet_velocity - player._integrate_forces_velocity
+					var bullet_point = p._hitbox.global_position-player_collision_offset
+					var bullet_radius = 58.0
+					var bullet_collision = p._hitbox.get_node_or_null("Collision")
+					if bullet_collision is CollisionShape2D and bullet_collision.shape is CircleShape2D:
+						bullet_point = bullet_collision.global_position-player_collision_offset
+						bullet_radius = bullet_collision.shape.radius*max(bullet_collision.global_scale.x,bullet_collision.global_scale.y)+player_collision_radius+6.0
+					var offset = bullet_point - pos
+					var closest_time = clamp(-offset.dot(relative_velocity)/max(1.0,relative_velocity.length_squared()),0.0,0.65)
+					if (offset + relative_velocity*closest_time).length_squared() < 500.0*500.0 or offset.length_squared() < 420.0*420.0:
+						bullet_threats.append([bullet_point,bullet_radius,1,bullet_velocity,0.0,0.65])
+				else:
+					add_threat(cells, p.global_position, pos, 58.0, true, p.velocity)
+	var threats = cells.values() + boss_threats + slash_threats + bullet_threats
 	if clock >= next_boss_report and (not boss_warnings.empty() or orbit_segments_count > 0):
 		next_boss_report = clock+1.0
 		record("boss_forecast",{"warnings":boss_warnings,"orbit_segments":orbit_segments_count,"focus":focused_boss_id})
@@ -1004,23 +1182,42 @@ func steer(player):
 		radial = Vector2.RIGHT
 	var patrol = center + radial.rotated(0.65) * min(bounds.size.x, bounds.size.y) * 0.3
 	var health_ratio = float(player.current_stats.health) / max(1.0,player.max_stats.health)
+	var boss_pursuit = policy.nightmare and policy.brawler and is_instance_valid(attack_target) and attack_target is Boss and health_ratio > 0.35
+	var urgent_healing = has_healing_target and (not boss_pursuit or health_ratio < 0.55)
 	var pursue_loot = has_loot_target and not (is_instance_valid(attack_target) and enemy_priority(attack_target) >= 4 and health_ratio > 0.55 and not has_healing_target) and (has_healing_target or health_ratio > 0.45 or threats.size() < 8)
+	if boss_pursuit and not urgent_healing:
+		pursue_loot = false
 	var target = loot_target if pursue_loot else patrol
 	var best = -1e20
 	var previous_direction = direction
 	var best_direction = Vector2.ZERO
-	var speed = max(1.0, float(player.max_stats.speed))
+	var speed = max(1.0, float(player.get_move_speed()))
 	var initial_distance = pos.distance_to(target)
 	var candidate_details = []
-	for v in directions:
+	var candidates = directions + [Vector2.ZERO] if boss_pursuit else directions
+	for v in candidates:
 		if not boundary_allows(pos,pos + v * speed * policy.body_horizon,bounds):
 			continue
 		var score = v.dot(previous_direction) * 6.0
 		# Reward actual progress toward a material cluster, in world-space units.
 		var end = pos + v * speed * 0.6
+		if policy.nightmare:
+			# Turn before entering a corner; immediate collision penalties still win.
+			var route_end = pos + v*speed*1.0
+			var edge_clearance = min(min(route_end.x-bounds.position.x,bounds.end.x-route_end.x),min(route_end.y-bounds.position.y,bounds.end.y-route_end.y))
+			score -= max(0.0,260.0-edge_clearance)*10.0
 		score += (initial_distance - end.distance_to(target)) * (1.4 if pursue_loot else 0.25)
 		score -= danger_path(pos, v * speed, threats)
-		if is_instance_valid(attack_target) and not has_healing_target and (not attack_target is Boss or charge_warning(attack_target).empty()):
+		if boss_pursuit and not urgent_healing:
+			# Keep closing at any distance, including charge windup. Swept native
+			# collision paths still override pursuit; resume immediately when safe.
+			var boss_future = attack_target.global_position + attack_target._integrate_forces_velocity*0.25
+			var preferred = max(100.0,attack_reach*0.65)
+			var before_error = abs(pos.distance_to(boss_future)-preferred)
+			var after_distance = (pos+v*speed*0.25).distance_to(boss_future)
+			score += clamp(before_error-abs(after_distance-preferred),-120.0,120.0)*18.0
+			score += max(0.0,1.0-abs(after_distance-preferred)/max(60.0,attack_reach*0.5))*500.0
+		elif is_instance_valid(attack_target) and not has_healing_target and (not attack_target is Boss or charge_warning(attack_target).empty()):
 			var target_velocity = Vector2.ZERO if attack_target is Neutral else attack_target._integrate_forces_velocity
 			var enemy_future = attack_target.global_position + target_velocity * 0.35
 			var attack_distance = (pos + v * speed * 0.35).distance_to(enemy_future)
@@ -1028,7 +1225,7 @@ func steer(player):
 				score += policy.engagement_score(attack_distance,attack_reach,health_ratio)
 				score += policy.approach_score(pos.distance_to(enemy_future),attack_distance,attack_reach,health_ratio)
 			elif health_ratio > 0.4 and attack_reach > 180.0:
-				var preferred_range = min(320.0,attack_reach*0.7)
+				var preferred_range = min(250.0,attack_reach*0.6) if gun_profile == "nightmare_shotguns" else min(320.0,attack_reach*0.7)
 				score += policy.approach_score(pos.distance_to(enemy_future),attack_distance,preferred_range,health_ratio)
 				score += max(0.0,1.0-abs(attack_distance-preferred_range)/max(100.0,preferred_range)) * 160.0
 		if sampled_damage:
@@ -1057,9 +1254,13 @@ func report(scene):
 			state["hp"] = p.current_stats.health
 			state["max_hp"] = p.max_stats.health
 			state["position"] = [p.global_position.x,p.global_position.y]
-	state["strategy_version"] = "0.6.23-dev"
+	state["strategy_version"] = "0.6.46-dev"
 	state["profile"] = gun_profile
 	state["character"] = selected_character
+	state["seed"] = seeded.fixed_seed
+	state["retries"] = RunData.retries
+	state["practice"] = RunData.retries > 0 or seeded.resume_path != ""
+	state["practice_wave_cleared"] = seeded.wave_cleared
 	state["run_id"] = recording_id
 	state["recording_enabled"] = recording_enabled
 	state["trees_killed_total"] = ProgressData.data.get("trees_killed",0)
@@ -1122,7 +1323,8 @@ func begin_recording():
 		recording_ended = true
 		record("run_start",{"run_id":recording_id,"character":selected_character,"recording":false})
 		return
-	var pid = OS.execute("C:/Users/75315/miniconda3/python.exe", PoolStringArray(["F:/codex-project/tudou/record_run.py",recording_id,str(OS.get_process_id())]), false)
+	var recorder = "record_private.py" if private_recording else "record_run.py"
+	var pid = OS.execute("C:/Users/75315/miniconda3/python.exe", PoolStringArray(["F:/codex-project/tudou/" + recorder,recording_id,str(OS.get_process_id())]), false)
 	record("recording_start", {"run_id":recording_id,"worker_pid":pid})
 
 func end_recording():
@@ -1184,10 +1386,15 @@ func _exit_tree():
 
 func analyze_run():
 	var analysis = policy.analyze(recent_combat, RunData.current_wave)
-	analysis["strategy_version"] = "0.6.23-dev"
+	analysis["strategy_version"] = "0.6.46-dev"
 	analysis["run_id"] = recording_id
 	analysis["gun_profile"] = gun_profile
 	analysis["character"] = selected_character
+	analysis["seed"] = seeded.fixed_seed
+	analysis["difficulty"] = RunData.current_difficulty
+	analysis["retries"] = RunData.retries
+	analysis["practice"] = RunData.retries > 0 or seeded.resume_path != ""
+	analysis["practice_wave_cleared"] = seeded.wave_cleared
 	analysis["development_speed"] = development_speed
 	analysis["healing_totals"] = healing_totals.duplicate(true)
 	analysis["won"] = RunData.run_won

@@ -22,3 +22,5 @@ Current campaign character: Lucky (character_lucky), feature/lucky-strategy. Old
 Current campaign character: Generalist (character_generalist), feature/generalist-strategy. Lucky D5 verified and merged; progress 9/10. Stop starting runs when native Danger6 unlocks.
 
 Campaign completed: Generalist D5 native victory verified, 10/10 qualifying clears, native Danger6 unlocked. Stop automatic character progression and do not start Danger6 without new user direction.
+
+Current user-selected challenge: Well Rounded Danger6, fixed seed 2026111106. Native zero-retry full victory verified with 0.6.45-dev; 0.6.46-dev killed both final bosses within 46.01 seconds in a same-equipment wave-20 checkpoint practice. See docs/well-rounded-danger6.md. The user explicitly authorized this challenge, checkpoint retries, optional video recording, and merging the code into the GitHub default branch. Do not start another run or character automatically.
