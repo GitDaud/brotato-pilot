@@ -6,9 +6,15 @@
 !/build_pack.py
 !/deploy.py
 !/launch_background.py
+!/isolated_desktop.py
+!/capture_background.py
+!/capture_window_guard.c
+!/Build-CaptureGuard.ps1
+!/record_private.py
 !/record_run.py
 !/campaign.py
 !/Start-Pilot.ps1
+!/Start-SeededTrial.ps1
 !/docs/
 /docs/*
 !/docs/ranger-danger5.md
@@ -19,6 +25,7 @@
 !/docs/old-danger5.md
 !/docs/lucky-danger5.md
 !/docs/generalist-danger5.md
+!/docs/well-rounded-danger6.md
 !/mods-unpacked/
 /mods-unpacked/*
 !/mods-unpacked/Codex-Pilot/

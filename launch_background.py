@@ -8,6 +8,8 @@ def main():
  parser.add_argument('--profile', choices=['ranged','brawler'], default='ranged')
  parser.add_argument('--speed', type=int, choices=[1,2,4], default=1)
  parser.add_argument('--record', action='store_true')
+ parser.add_argument('--isolated', action='store_true')
+ parser.add_argument('--capture-background', action='store_true')
  args=parser.parse_args()
  (ROOT/'run').mkdir(exist_ok=True)
  # Refuse duplicate workers: simultaneous games overwrite the shared evidence files.
@@ -28,6 +30,14 @@ def main():
     finally:k.CloseHandle(handle)
   except (ValueError,KeyError,json.JSONDecodeError):pass
  os.environ.update(SteamAppId='1942280',SteamGameId='1942280')
+ if args.capture_background:
+  from capture_background import start
+  start(args.profile,args.speed)
+  return
+ if args.isolated:
+  from isolated_desktop import start
+  start(args.profile,args.speed,args.record)
+  return
  with (ROOT/'run/capture-engine.log').open('wb') as log:
   process=subprocess.Popen([str(GAME/'Brotato.exe'),'--main-pack',str(GAME/'CodexPilot.pck'),'--windowed','--resolution','1920x1080','--audio-driver','Dummy','--pilot-profile='+args.profile,'--pilot-speed='+str(args.speed),'--pilot-record='+('1' if args.record else '0'),'--log-file',str(ROOT/'run/startup.log')],cwd=GAME,stdout=log,stderr=log)
  result={'speed':args.speed,'profile':args.profile,'pid':process.pid,'desktop':'WinSta0\\Default','display':'native_game_window','capture':'windows_graphics_capture_hwnd','requested_resolution':[1920,1080],'input_isolated':False}

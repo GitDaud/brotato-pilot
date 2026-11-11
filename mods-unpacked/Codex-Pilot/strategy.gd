@@ -3,6 +3,7 @@ extends Reference
 var armor_bias = 1.0
 var brawler = false
 var character = "character_well_rounded"
+var nightmare = false
 var body_horizon = 0.30
 
 # Thresholds are pilot heuristics, not game rules or guide-prescribed breakpoints.
@@ -77,6 +78,20 @@ func weights(stats, wave):
 		result["stat_range"] = 0.5 if stats.get("stat_range",0) < 60 else 0.06
 	if character == "character_explorer":
 		result["stat_percent_damage"] = 1.3
+	if nightmare:
+		result["stat_armor"] *= 1.5
+		result["stat_attack_speed"] = 4.0 if stats.get("stat_attack_speed",0) < 60 else 1.0
+		result["stat_speed"] = 6.0 if stats.get("stat_speed",0) < 40 else 1.0
+		result["stat_percent_damage"] = 2.0 if stats.get("stat_percent_damage",0) < 80 else 1.0
+		result["stat_crit_chance"] = 2.0 if stats.get("stat_crit_chance",0) < 40 else 0.8
+		result["stat_lifesteal"] = 6.0 if stats.get("stat_lifesteal",0) < 8 else 1.0
+		result["stat_luck"] = 0.2 if wave < 8 and stats.get("stat_luck",0) < 20 else 0.03
+		result["stat_range"] = 0.5 if stats.get("stat_range",0) < 50 else 0.15
+		if brawler:
+			result["stat_melee_damage"] = 4.0
+			result["stat_hp_regeneration"] = 5.0 if stats.get("stat_hp_regeneration",0) < 12 else 2.0
+			result["stat_lifesteal"] = 3.0 if stats.get("stat_lifesteal",0) < 8 else 1.0
+			result["stat_crit_chance"] = 1.0 if stats.get("stat_crit_chance",0) < 40 else 0.4
 	return result
 
 func harvesting_return(current, delta, wave, growth = 5.0):
@@ -99,7 +114,7 @@ func score_effects(effects, stats, wave):
 	var scored_harvesting = float(stats.get("stat_harvesting",0))
 	for e in effects:
 		# Pilot continuously moves; a conditional stationary bonus is not active armor.
-		if character == "character_lucky" and e.custom_key in ["dmg_when_pickup_gold", "dmg_when_death"]:
+		if e.custom_key in ["dmg_when_pickup_gold", "dmg_when_death"]:
 			continue # Luck-scaled proc damage is not a flat luck gain.
 		if e.custom_key == "temp_stats_while_not_moving":
 			continue
@@ -107,11 +122,18 @@ func score_effects(effects, stats, wave):
 			continue
 		if brawler and e.key == "stat_ranged_damage":
 			continue
+		if nightmare and e.key in ["number_of_enemies","enemy_speed","enemy_health","enemy_damage"]:
+			# Native control effects trade some income for less pressure. The
+			# harmful positive variants are rejected before item scoring.
+			score -= e.value*{"number_of_enemies":6.0,"enemy_speed":8.0,"enemy_health":3.0,"enemy_damage":3.0}[e.key]
+			continue
 		if not w.has(e.key):
 			continue
 		if e.key == "stat_harvesting":
 			# Future currency buys fewer stats when native shop prices are higher.
 			var economy_weight = 0.15
+			if nightmare and (wave >= 5 or scored_harvesting >= 30):
+				economy_weight *= 0.05
 			if character == "character_lucky" and (wave >= 6 or scored_harvesting >= 30):
 				economy_weight *= 0.3
 			if character == "character_old" and (wave >= 8 or scored_harvesting >= 40 or (wave >= 4 and stats.get("stat_percent_damage",0) < 20)):
@@ -133,7 +155,7 @@ func score_effects(effects, stats, wave):
 			effective_value = min(current+effective_value,100.0)-min(current,100.0)
 		if e.key == "stat_dodge":
 			# Negative dodge has no native chance, but creates a future repair cost.
-			weight = 2.0 if brawler else 0.9
+			weight = (3.0 if scored_dodge < 50.0 else 1.0) if nightmare else (2.0 if brawler else 0.9)
 			var dodge_delta = effective_value
 			effective_value = min(scored_dodge + dodge_delta,60.0) - min(scored_dodge,60.0)
 			scored_dodge += dodge_delta
@@ -227,6 +249,8 @@ func should_restart(won, analyzed, recording_ended, elapsed):
 
 func breaks_floor(key, delta, stats, wave):
 	var floors = {"stat_speed": min(15.0, wave * 1.5), "stat_ranged_damage": max(0.0, wave - 3.0), "stat_attack_speed": 0.0, "stat_range": -20.0}
+	if nightmare:
+		floors["stat_percent_damage"] = 0.0 if wave < 8 else 10.0
 	if character == "character_old" and wave >= 8:
 		floors["stat_percent_damage"] = 20.0
 	if brawler:
@@ -240,6 +264,8 @@ func breaks_floor(key, delta, stats, wave):
 # Spend a bounded part of the shop's opening funds searching for useful items.
 # Keep enough currency to buy an offer instead of consuming everything in rerolls.
 func shop_reserve(wave):
+	if nightmare:
+		return 20 + wave * 2
 	if wave < 8:
 		return 20 + wave * 3
 	# No later shop to fund after wave 19. Saver is currency-dependent.
@@ -249,7 +275,7 @@ func can_reroll(gold, cost, rolls, weapon_count, wave, opening_gold, spent):
 	if wave < 8:
 		return rolls < (6 if weapon_count < 6 else 3) and (cost == 0 or gold >= 20 + wave * 3 + cost)
 	var reserve = shop_reserve(wave)
-	var budget = max(60.0, opening_gold * 0.35)
+	var budget = max(80.0, opening_gold * 0.45) if nightmare else max(60.0, opening_gold * 0.35)
 	return rolls < 16 and gold >= reserve + cost and spent + cost <= budget
 
 # Same admission rule for marginal weapons and items, before ranking by cost.
@@ -276,7 +302,7 @@ func upgrade_score(effects, stats, wave, score):
 	return score
 
 func reroll_upgrade(effects, stats, wave, score, gold, cost, rolls, spent):
-	if not character in ["character_mutant", "character_old", "character_lucky"] or rolls >= 2 or cost < 0:
+	if (not nightmare and not character in ["character_mutant", "character_old", "character_lucky"]) or rolls >= 2 or cost < 0:
 		return false
 	if gold-cost < (30+wave*2 if wave < 8 else 80) or cost > max(5.0,gold*0.08) or spent+cost > max(8.0,gold*0.12):
 		return false
@@ -285,6 +311,8 @@ func reroll_upgrade(effects, stats, wave, score, gold, cost, rolls, spent):
 	if character == "character_old":
 		# Keep useful offers; reroll only weak choices within the shared budget.
 		return score < 12.0
+	if nightmare:
+		return score < 10.0
 	for effect in effects:
 		if effect.value <= 0:
 			continue
